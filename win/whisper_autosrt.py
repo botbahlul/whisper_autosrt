@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import absolute_import, print_function, unicode_literals
 import argparse
 import audioop
@@ -28,7 +27,7 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 import whisper
 
 
-VERSION = "0.0.1"
+VERSION = "0.0.2"
 
 #======================================================== ffmpeg_progress_yield ========================================================#
 
