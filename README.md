@@ -1,7 +1,7 @@
 # whisper_autosrt <a href="https://pypi.python.org/pypi/whisper_autosrt"><img src="https://img.shields.io/pypi/v/whisper_autosrt.svg"></img></a>
   
 ### Auto generate subtitle files for any video / audio files
-whisper_autosrt is a simple command line tool made with python to auto generate subtitle/closed caption for any video or audio files using OpenAI whisper module and translate it automatically for free using a simple unofficial online Google Translate API.
+whisper_autosrt is a simple command line tool made with python to auto generate subtitle/closed caption for any video or audio files using openai_whisper module and translate it automatically for free using a simple unofficial online Google Translate API.
 
 ### Installation
 If you don't have python on your Windows system you can get compiled version from this git release assets
