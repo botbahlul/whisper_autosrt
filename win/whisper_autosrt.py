@@ -24,10 +24,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
-import whisper
+from faster_whisper import WhisperModel
 
 
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 #======================================================== ffmpeg_progress_yield ========================================================#
 
@@ -254,8 +254,6 @@ class FfmpegProgress:
                     yield int(elapsed_time * 100/ total_dur)
 
         if self.process is None or self.process.returncode != 0:
-            #print(self.process)
-            #print(self.process.returncode)
             _pretty_stderr = "\n".join(stderr)
             raise RuntimeError(f"Error running command {self.cmd}: {_pretty_stderr}")
 
@@ -326,9 +324,7 @@ def stop_ffmpeg_linux(error_messages_callback=None):
         output = subprocess.check_output(['ps', '-ef'])
         pid = [line.split()[1] for line in output.decode('utf-8').split('\n') if process_name in line][0]
         subprocess.call(['kill', '-9', str(pid)])
-        #print(f"{process_name} has been killed")
     except IndexError:
-        #print(f"{process_name} is not running")
         pass
 
     except KeyboardInterrupt:
@@ -1232,190 +1228,6 @@ class WavConverter:
             return
 
 
-class SpeechRegionFinder:
-    @staticmethod
-    def percentile(arr, percent):
-        arr = sorted(arr)
-        k = (len(arr) - 1) * percent
-        f = math.floor(k)
-        c = math.ceil(k)
-        if f == c: return arr[int(k)]
-        d0 = arr[int(f)] * (c - k)
-        d1 = arr[int(c)] * (k - f)
-        return d0 + d1
-
-    #def __init__(self, frame_width=4096, min_region_size=0.5, max_region_size=6):
-    def __init__(self, frame_width=4096, min_region_size=0.5, max_region_size=6, error_messages_callback=None):
-        self.frame_width = frame_width
-        self.min_region_size = min_region_size
-        self.max_region_size = max_region_size
-        self.error_messages_callback = error_messages_callback
-
-    #def __call__(self, wav_filepath, error_messages_callback=None):
-    def __call__(self, wav_filepath):
-        try:
-            reader = wave.open(wav_filepath)
-            sample_width = reader.getsampwidth()
-            rate = reader.getframerate()
-            n_channels = reader.getnchannels()
-            total_duration = reader.getnframes() / rate
-            chunk_duration = float(self.frame_width) / rate
-            n_chunks = int(total_duration / chunk_duration)
-            energies = []
-            for i in range(n_chunks):
-                chunk = reader.readframes(self.frame_width)
-                energies.append(audioop.rms(chunk, sample_width * n_channels))
-            threshold = SpeechRegionFinder.percentile(energies, 0.2)
-            elapsed_time = 0
-            regions = []
-            region_start = None
-            for energy in energies:
-                is_silence = energy <= threshold
-                max_exceeded = region_start and elapsed_time - region_start >= self.max_region_size
-                if (max_exceeded or is_silence) and region_start:
-                    if elapsed_time - region_start >= self.min_region_size:
-                        regions.append((region_start, elapsed_time))
-                        region_start = None
-                elif (not region_start) and (not is_silence):
-                    region_start = elapsed_time
-                elapsed_time += chunk_duration
-            return regions
-
-        except KeyboardInterrupt:
-            if self.error_messages_callback:
-                self.error_messages_callback("Cancelling all tasks")
-            else:
-                print("Cancelling all tasks")
-            return
-
-        except Exception as e:
-            if self.error_messages_callback:
-                self.error_messages_callback(e)
-            else:
-                print(e)
-            return
-
-
-class FLACConverter(object):
-    #def __init__(self, wav_filepath, include_before=0.25, include_after=0.25):
-    def __init__(self, wav_filepath, include_before=0.25, include_after=0.25, error_messages_callback=None):
-        self.wav_filepath = wav_filepath
-        self.include_before = include_before
-        self.include_after = include_after
-        self.error_messages_callback = error_messages_callback
-
-    #def __call__(self, region, error_messages_callback=None):
-    def __call__(self, region):
-        try:
-            start, end = region
-            start = max(0, start - self.include_before)
-            end += self.include_after
-            temp = tempfile.NamedTemporaryFile(suffix='.flac', delete=False)
-            command = [
-                        "ffmpeg",
-                        "-ss", str(start),
-                        "-t", str(end - start),
-                        "-y",
-                        "-i", self.wav_filepath,
-                        "-loglevel", "error",
-                        temp.name
-                      ]
-            subprocess.check_output(command, stdin=open(os.devnull))
-            content = temp.read()
-            temp.close()
-            return content
-
-        except KeyboardInterrupt:
-            if self.error_messages_callback:
-                self.error_messages_callback("Cancelling all tasks")
-            else:
-                print("Cancelling all tasks")
-            return
-
-        except Exception as e:
-            if self.error_messages_callback:
-                self.error_messages_callback(e)
-            else:
-                print(e)
-            return
-
-
-class SpeechRecognizer(object):
-    def __init__(self, language="en", rate=44100, retries=3, api_key="AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw", timeout=30, error_messages_callback=None):
-        self.language = language
-        self.rate = rate
-        self.api_key = api_key
-        self.retries = retries
-        self.timeout = timeout
-        self.error_messages_callback = error_messages_callback
-
-    def __call__(self, data):
-        try:
-            for i in range(self.retries):
-                url = "http://www.google.com/speech-api/v2/recognize?client=chromium&lang={lang}&key={key}".format(lang=self.language, key=self.api_key)
-                headers = {"Content-Type": "audio/x-flac rate=%d" % self.rate}
-
-                try:
-                    resp = requests.post(url, data=data, headers=headers, timeout=self.timeout)
-                except requests.exceptions.ConnectionError:
-                    try:
-                        resp = httpx.post(url, data=data, headers=headers, timeout=self.timeout)
-                    except httpx.exceptions.NetworkError:
-                        continue
-
-                for line in resp.content.decode('utf-8').split("\n"):
-                    try:
-                        line = json.loads(line)
-                        line = line['result'][0]['alternative'][0]['transcript']
-                        return line[:1].upper() + line[1:]
-                    except:
-                        # no result
-                        continue
-
-        except KeyboardInterrupt:
-            if self.error_messages_callback:
-                self.error_messages_callback("Cancelling all tasks")
-            else:
-                print("Cancelling all tasks")
-            return
-
-        except Exception as e:
-            if self.error_messages_callback:
-                self.error_messages_callback(e)
-            else:
-                print(e)
-            return
-
-
-class WhisperRecognizer(object):
-    def __init__(self, model="small", language="en", fp16=False, task="transcribe", verbose=False, error_messages_callback=None):
-        self.model = model
-        self.language = language
-        self.fp16 = fp16
-        self.task = task
-        self.verbose = verbose
-        self.error_messages_callback = error_messages_callback
-
-    def __call__(self, audio_path):
-        try:
-            result = self.model.transcribe(audio_path, language=self.language, fp16=self.fp16, task=self.task, verbose=self.verbose)
-            return result
-
-        except KeyboardInterrupt:
-            if self.error_messages_callback:
-                self.error_messages_callback("Cancelling all tasks")
-            else:
-                print("Cancelling all tasks")
-            return
-
-        except Exception as e:
-            if self.error_messages_callback:
-                self.error_messages_callback(e)
-            else:
-                print(e)
-            return
-
-
 class SentenceTranslator(object):
     def __init__(self, src, dst, patience=-1, timeout=30, error_messages_callback=None):
         self.src = src
@@ -1723,7 +1535,8 @@ def main():
     elif args.src_language != "auto":
         args.src_language = src_language
 
-    model = whisper.load_model(model_name)
+    #model = WhisperModel(model_name, compute_type="float32", cpu_threads=4, num_workers=16)
+    model = WhisperModel(model_name, compute_type="float32")
 
     if args.list_models:
         print("List of whisper models:")
@@ -1784,13 +1597,11 @@ def main():
 
     args_source_path = args.source_path
 
-    if (not ("*" and "?") in str(args_source_path)):
+    if (not "*" in str(args_source_path)) and (not "?" in str(args_source_path)):
         for filepath in args_source_path:
             fpath = Path(filepath)
-            #print("fpath = %s" %fpath)
             if not os.path.isfile(fpath):
                 not_exist_filepaths.append(filepath)
-                #print(str(fpath) + " is not exist")
 
     if sys.platform == "win32":
         for i in range(len(args.source_path)):
@@ -1799,13 +1610,10 @@ def main():
                 args_source_path[i] = args.source_path[i].replace("[", placeholder)
                 args_source_path[i] = args_source_path[i].replace("]", "[]]")
                 args_source_path[i] = args_source_path[i].replace(placeholder, "[[]")
-                #print("args_source_path = %s" %(args_source_path))
 
     for arg in args_source_path:
         if not sys.platform == "win32" :
             arg = escape(arg)
-
-        #print("glob(arg) = %s" %(glob(arg)))
 
         arg_filepaths += glob(arg)
 
@@ -1823,8 +1631,6 @@ def main():
             for invalid_media_filepath in invalid_media_filepaths:
                 msg = "{} is not valid video or audio files".format(invalid_media_filepath)
                 print(msg)
-
-    #print("not_exist_filepaths = %s" %(not_exist_filepaths))
 
     if not_exist_filepaths:
         for not_exist_filepath in not_exist_filepaths:
@@ -1852,26 +1658,35 @@ def main():
         print("Processing {} :".format(media_filepath))
 
         try:
-            print("Converting to a temporary WAV file      : ")
-            widgets = ["", Percentage(), ' ', Bar(marker='█'), ' ', ETA()]
+            #marker='█'
+            widgets = ["Converting to a temporary WAV file      : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
             pbar = ProgressBar(widgets=widgets, maxval=100).start()
             wav_converter = WavConverter(progress_callback=show_progress, error_messages_callback=show_error_messages)
             wav_filepath, sample_rate = wav_converter(media_filepath)
             pbar.finish()
 
-            print("Performing speech recognition           : ")
-            whisper_recognizer = WhisperRecognizer(language=args.src_language, model=model, fp16=False, task=task, verbose=False, error_messages_callback=show_error_messages)
-            result = whisper_recognizer(wav_filepath)
+            reader = wave.open(wav_filepath)
+            rate = reader.getframerate()
+            total_duration = reader.getnframes() / rate
+            reader.close()
+
+            segments, info = model.transcribe(wav_filepath, beam_size=5, language=src_language)
+
+            widgets = ["Performing speech recognition           : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
+            pbar = ProgressBar(widgets=widgets, maxval=100).start()
 
             timed_subtitles = []
             regions = []
             transcripts = []
-            for segment in result['segments']:
-                start = segment['start']
-                end = segment['end']
-                text = segment['text']
+            for segment in segments:
+                start = segment.start
+                end = segment.end
+                text = segment.text
                 regions.append((start, end))
                 transcripts.append(text)
+                progress = int(end)*100/total_duration
+                pbar.update(progress)
+            pbar.finish()
             timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
 
             subtitle_format = args.format
@@ -1893,8 +1708,8 @@ def main():
                     created_regions.append(entry[0])
                     created_subtitles.append(entry[1])
 
-                print("Translating from %s to %s   : " %(src_language.center(8), dst_language.center(8)))
-                widgets = ["", Percentage(), ' ', Bar(marker='█'), ' ', ETA()]
+                prompt = "Translating from %s to %s   : " %(src_language.center(8), dst_language.center(8))
+                widgets = [prompt, Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
                 pbar = ProgressBar(widgets=widgets, maxval=len(timed_subtitles)).start()
 
                 transcript_translator = SentenceTranslator(src=args.src_language, dst=args.dst_language, error_messages_callback=show_error_messages)
@@ -1911,7 +1726,6 @@ def main():
 
             print('Done.')
             if do_translate:
-                #print("Original subtitles file created at      : {}".format(subtitle_filepath))
                 os.remove(subtitle_filepath)
                 print('Translated subtitles file created at    : {}' .format(translated_subtitle_filepath))
             else:
@@ -1940,7 +1754,6 @@ def main():
             else:
                 stop_ffmpeg_linux(error_messages_callback=show_error_messages)
 
-            remove_temp_files("flac")
             remove_temp_files("wav")
             return 1
 
@@ -1957,7 +1770,6 @@ def main():
                 else:
                     stop_ffmpeg_linux(error_messages_callback=show_error_messages)
 
-                remove_temp_files("flac")
                 remove_temp_files("wav")
                 return 1
 
@@ -1971,7 +1783,6 @@ def main():
     else:
         stop_ffmpeg_linux(error_messages_callback=show_error_messages)
 
-    remove_temp_files("flac")
     remove_temp_files("wav")
 
 if __name__ == '__main__':
