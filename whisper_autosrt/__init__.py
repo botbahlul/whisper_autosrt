@@ -27,7 +27,21 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from faster_whisper import WhisperModel
 
 
-VERSION = "0.0.3"
+VERSION = "0.0.4"
+
+whisper_models = [
+                "tiny.en",
+                "tiny",
+                "base.en",
+                "base",
+                "small.en",
+                "small",
+                "medium.en",
+                "medium",
+                "large-v1",
+                "large-v2",
+                "large"
+]
 
 #======================================================== ffmpeg_progress_yield ========================================================#
 
@@ -1540,7 +1554,8 @@ def main():
 
     if args.list_models:
         print("List of whisper models:")
-        for model_name in whisper.available_models():
+        #for model_name in whisper.available_models():
+        for model_name in whisper_models:
             print(model_name)
         return 0
 
