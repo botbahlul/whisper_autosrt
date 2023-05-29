@@ -23,7 +23,7 @@ install_requires=[
     "pysrt>=1.0.1",
     "six>=1.11.0",
     "progressbar2>=3.34.3",
-    "openai_whisper>=20230314",
+    "faster_whisper>=0.6.0",
 ]
 
 setup(
