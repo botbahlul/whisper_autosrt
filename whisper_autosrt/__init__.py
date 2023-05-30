@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from faster_whisper import WhisperModel
 
 
-VERSION = "0.0.4"
+VERSION = "0.0.5"
 
 whisper_models = [
                 "tiny.en",
@@ -1685,7 +1685,7 @@ def main():
             total_duration = reader.getnframes() / rate
             reader.close()
 
-            segments, info = model.transcribe(wav_filepath, beam_size=5, language=src_language)
+            segments, info = model.transcribe(wav_filepath, beam_size=5, language=src_language, task=task)
 
             widgets = ["Performing speech recognition           : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
             pbar = ProgressBar(widgets=widgets, maxval=100).start()
