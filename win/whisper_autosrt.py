@@ -27,21 +27,7 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from faster_whisper import WhisperModel
 
 
-VERSION = "0.0.5"
-
-whisper_models = [
-                "tiny.en",
-                "tiny",
-                "base.en",
-                "base",
-                "small.en",
-                "small",
-                "medium.en",
-                "medium",
-                "large-v1",
-                "large-v2",
-                "large"
-]
+VERSION = "0.0.6"
 
 #======================================================== ffmpeg_progress_yield ========================================================#
 
@@ -1513,8 +1499,48 @@ def show_error_messages(messages):
     print(messages)
 
 
+def get_video_duration(filename, error_messages_callback=None):
+    try:
+        command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{filename}"'
+        result = subprocess.run(command, capture_output=True, text=True, shell=True)
+
+        if result.returncode == 0:
+            duration = float(result.stdout)
+            return duration
+        else:
+            msg = f"Failed to get duration for {filename}."
+            if error_messages_callback:
+                error_messages_callback(msg)
+            return None
+
+    except Exception as e:
+        if error_messages_callback:
+            error_messages_callback(e)
+        else:
+            print(e)
+        return
+
+
 def main():
     global pbar
+
+    whisper_models = [
+                        "tiny.en",
+                        "tiny",
+                        "base.en",
+                        "base",
+                        "small.en",
+                        "small",
+                        "medium.en",
+                        "medium",
+                        "large-v1",
+                        "large-v2",
+                        "large"
+    ]
+
+    devices = ["auto", "cuda", "cpu"]
+
+    compute_types = ["default", "auto", "int8", "int8_float16", "int16", "float16", "float32"]
 
     if sys.platform == "win32":
         stop_ffmpeg_windows(error_messages_callback=show_error_messages)
@@ -1526,15 +1552,21 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('source_path', help="Path to the video or audio files to generate subtitles files (use wildcard for multiple files or separate them with a space character e.g. \"file 1.mp4\" \"file 2.mp4\")", nargs='*')
-    parser.add_argument('-m', '--model-name', default="small", help="name of the Whisper model to use")
-    parser.add_argument('-lm', '--list-models', help="List of Whisper models name", action='store_true')
+    parser.add_argument('-m', '--model-name', default="small", help="name of whisper model to use")
+    parser.add_argument('-lm', '--list-models', help="List of whisper models name", action='store_true')
+    parser.add_argument('-d', '--device', default="auto", help="name of the device to use")
+    parser.add_argument('-ld', '--list-devices', help="List of supported device", action='store_true')
+    parser.add_argument('-ct', '--compute-type', default="auto", help="name of the compute type (quantization) to use")
+    parser.add_argument('-lct', '--list-compute-types', help="List of supported compute types", action='store_true')
+    parser.add_argument('-cpu', '--cpu-threads', default=0, help="Number of threads to use when running on CPU")
+    parser.add_argument('-nw', '--num-workers', default=1, help="Number of concurrent calls when running the model")
     parser.add_argument('-S', '--src-language', help="Language code of the audio language spoken in video/audio source_path", default="en")
     parser.add_argument('-D', '--dst-language', help="Desired translation language code for the subtitles", default=None)
-    parser.add_argument('-lwl', '--list-whisper-languages', help="List all whisper supported languages", action='store_true')
-    parser.add_argument('-lgl', '--list-google-languages', help="List all google translate supported languages", action='store_true')
+    parser.add_argument('-lwl', '--list-whisper-languages', help="List all whisper supported languages (src_languages)", action='store_true')
+    parser.add_argument('-lgl', '--list-google-languages', help="List all google translate supported languages (dst_languages)", action='store_true')
     parser.add_argument('-F', '--format', help="Desired subtitle format", default="srt")
     parser.add_argument('-lf', '--list-formats', help="List all supported subtitle formats", action='store_true')
-    parser.add_argument('-C', '--concurrency', help="Number of concurrent API requests to make", type=int, default=10)
+    parser.add_argument('-C', '--concurrency', help="Number of concurrent translate API requests to make", type=int, default=10)
     parser.add_argument('-v', '--version', action='version', version=VERSION)
 
     args = parser.parse_args()
@@ -1549,14 +1581,24 @@ def main():
     elif args.src_language != "auto":
         args.src_language = src_language
 
-    #model = WhisperModel(model_name, compute_type="float32", cpu_threads=4, num_workers=16)
-    model = WhisperModel(model_name, compute_type="float32")
+    model = WhisperModel(model_name, device=args.device, compute_type=args.compute_type, cpu_threads=int(args.cpu_threads), num_workers=int(args.num_workers))
 
     if args.list_models:
         print("List of whisper models:")
-        #for model_name in whisper.available_models():
         for model_name in whisper_models:
             print(model_name)
+        return 0
+
+    if args.list_devices:
+        print("List of supported devices:")
+        for device in devices:
+            print(device)
+        return 0
+
+    if args.list_compute_types:
+        print("List of supported compute types:")
+        for compute_type in compute_types:
+            print(compute_type)
         return 0
 
     whisper_language = WhisperLanguage()
@@ -1651,7 +1693,7 @@ def main():
         for not_exist_filepath in not_exist_filepaths:
             msg = "{} is not exist".format(not_exist_filepath)
             print(msg)
-        if (not ("*" and "?") in str(args_source_path)):
+        if (not "*" in str(args_source_path)) and (not "?" in str(args_source_path)):
             sys.exit(0)
 
     if not arg_filepaths and not not_exist_filepaths:
@@ -1673,20 +1715,9 @@ def main():
         print("Processing {} :".format(media_filepath))
 
         try:
+            total_duration = get_video_duration(media_filepath, error_messages_callback=show_error_messages)
+            segments, info = model.transcribe(media_filepath, beam_size=5, language=src_language, task=task)
             #marker='█'
-            widgets = ["Converting to a temporary WAV file      : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
-            pbar = ProgressBar(widgets=widgets, maxval=100).start()
-            wav_converter = WavConverter(progress_callback=show_progress, error_messages_callback=show_error_messages)
-            wav_filepath, sample_rate = wav_converter(media_filepath)
-            pbar.finish()
-
-            reader = wave.open(wav_filepath)
-            rate = reader.getframerate()
-            total_duration = reader.getnframes() / rate
-            reader.close()
-
-            segments, info = model.transcribe(wav_filepath, beam_size=5, language=src_language, task=task)
-
             widgets = ["Performing speech recognition           : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
             pbar = ProgressBar(widgets=widgets, maxval=100).start()
 
@@ -1694,12 +1725,9 @@ def main():
             regions = []
             transcripts = []
             for segment in segments:
-                start = segment.start
-                end = segment.end
-                text = segment.text
-                regions.append((start, end))
-                transcripts.append(text)
-                progress = int(end)*100/total_duration
+                regions.append((segment.start, segment.end))
+                transcripts.append(segment.text)
+                progress = int(int(segment.end)*100/total_duration)
                 pbar.update(progress)
             pbar.finish()
             timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
@@ -1712,10 +1740,6 @@ def main():
             writer.write(subtitle_filepath)
 
             if do_translate:
-                # CONCURRENT TRANSLATION USING class SentenceTranslator(object)
-                # NO NEED TO TRANSLATE ALL transcript IN transcripts
-                # BECAUSE SOME region IN regions MAY JUST HAVE transcript WITH EMPTY STRING
-                # JUST TRANSLATE ALREADY CREATED subtitles ENTRIES FROM timed_subtitles
                 timed_subtitles = writer.timed_subtitles
                 created_regions = []
                 created_subtitles = []
