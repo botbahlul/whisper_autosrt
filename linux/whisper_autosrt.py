@@ -19,17 +19,23 @@ import pysrt
 import six
 # ADDITIONAL IMPORT
 from glob import glob, escape
+import shlex
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from faster_whisper import WhisperModel
+import ctypes
+import shutil
 
 
-VERSION = "0.0.6"
+VERSION = "0.0.7"
+#marker='█'
+
 
 #======================================================== ffmpeg_progress_yield ========================================================#
+
 
 import re
 #import subprocess
@@ -251,7 +257,8 @@ class FfmpegProgress:
                 progress_time = FfmpegProgress.TIME_REGEX.search(stderr_line)
                 if progress_time:
                     elapsed_time = to_ms(**progress_time.groupdict())
-                    yield int(elapsed_time * 100/ total_dur)
+                    if elapsed_time > 0:
+                        yield int(elapsed_time * 100/ total_dur)
 
         if self.process is None or self.process.returncode != 0:
             _pretty_stderr = "\n".join(stderr)
@@ -289,6 +296,12 @@ class FfmpegProgress:
 
 
 #=======================================================================================================================================#
+
+
+def change_code_page(code_page):
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleOutputCP(code_page)
+    kernel32.SetConsoleCP(code_page)
 
 
 def stop_ffmpeg_windows(error_messages_callback=None):
@@ -406,6 +419,7 @@ def check_file_type(file_path, error_messages_callback=None):
 class WhisperLanguage:
     def __init__(self):
         self.list_codes = []
+        self.list_codes.append("auto")
         self.list_codes.append("af")
         self.list_codes.append("sq")
         self.list_codes.append("am")
@@ -507,6 +521,7 @@ class WhisperLanguage:
         self.list_codes.append("yo")
 
         self.list_names = []
+        self.list_names.append("Auto Detect")
         self.list_names.append("Afrikaans")
         self.list_names.append("Albanian")
         self.list_names.append("Amharic")
@@ -611,6 +626,7 @@ class WhisperLanguage:
         self.name_of_code = dict(zip(self.list_codes, self.list_names))
 
         self.dict = {
+                        'auto': 'Auto Detect',
                         'af': 'Afrikaans',
                         'sq': 'Albanian',
                         'am': 'Amharic',
@@ -1499,7 +1515,7 @@ def show_error_messages(messages):
     print(messages)
 
 
-def get_video_duration(filename, error_messages_callback=None):
+def get_duration(filename, error_messages_callback=None):
     try:
         command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{filename}"'
         result = subprocess.run(command, capture_output=True, text=True, shell=True)
@@ -1512,6 +1528,133 @@ def get_video_duration(filename, error_messages_callback=None):
             if error_messages_callback:
                 error_messages_callback(msg)
             return None
+
+    except Exception as e:
+        if error_messages_callback:
+            error_messages_callback(e)
+        else:
+            print(e)
+        return
+
+
+class MediaSubtitleRenderer:
+    @staticmethod
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
+        else:
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    @staticmethod
+    def ffmpeg_check():
+        if WavConverter.which("ffmpeg"):
+            return "ffmpeg"
+        if WavConverter.which("ffmpeg.exe"):
+            return "ffmpeg.exe"
+        return None
+
+    def __init__(self, media_ext=None, subtitle_path=None, output_path=None, progress_callback=None, error_messages_callback=None):
+        self.media_ext = media_ext
+        self.subtitle_path = subtitle_path
+        self.output_path = output_path
+        self.progress_callback = progress_callback
+        self.error_messages_callback = error_messages_callback
+
+    def __call__(self, media_filepath):
+        temp = tempfile.NamedTemporaryFile(suffix=self.media_ext, delete=False)
+        if not os.path.isfile(media_filepath):
+            if self.error_messages_callback:
+                self.error_messages_callback("The given file does not exist: {0}".format(media_filepath))
+            else:
+                print("The given file does not exist: {0}".format(media_filepath))
+                raise Exception("Invalid file: {0}".format(media_filepath))
+        if not self.ffmpeg_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("ffmpeg: Executable not found on machine.")
+            else:
+                print("ffmpeg: Executable not found on machine.")
+                raise Exception("Dependency not found: ffmpeg")
+
+        try:
+            ffmpeg_command = [
+                                "ffmpeg",
+                                "-y",
+                                "-i", media_filepath,
+                                "-vf", f"subtitles={shlex.quote(self.subtitle_path)}",
+                                temp.name
+                                #output_path
+                             ]
+
+            ff = FfmpegProgress(ffmpeg_command)
+            percentage = 0
+            for progress in ff.run_command_with_progress():
+                percentage = progress
+                if self.progress_callback:
+                    self.progress_callback(media_filepath, percentage)
+
+            temp.close()
+            if os.path.isfile(temp.name):
+            #if os.path.isfile(output_path):
+                return temp.name
+                #return output_path
+            else:
+                return None
+
+        except KeyboardInterrupt:
+            if self.error_messages_callback:
+                self.error_messages_callback("Cancelling all tasks")
+            else:
+                print("Cancelling all tasks")
+            return
+
+        except Exception as e:
+            if self.error_messages_callback:
+                self.error_messages_callback(e)
+            else:
+                print(e)
+            return
+
+
+def render_media_with_subtitle(video_path, media_type, media_ext, subtitle_path, output_path, error_messages_callback=None):
+
+    try:
+        ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_path}"'
+        ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        total_duration = float(ffprobe_process.stdout.read().decode().strip())
+
+        ffmpeg_command = f'ffmpeg -y -i "{video_path}" -vf "subtitles={shlex.quote(subtitle_path)}" "{output_path}"'
+
+        widgets = [f"Rendering subtitles with {media_type} : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+        pbar = ProgressBar(widgets=widgets, maxval=100).start()
+        percentage = 0
+
+        if sys.platform == "win32":
+            process = subprocess.Popen(ffmpeg_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        else:
+            process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+
+        for line in process.stdout:
+            if "time=" in line:
+                #print(line)
+                time_str = line.split("time=")[1].split()[0]
+                #print("time_str = %s" %time_str)
+                current_duration = sum(float(x) * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
+                #print("current_duration = %s" %current_duration)
+                if current_duration>0:
+                    percentage = int(current_duration*100/total_duration)
+                    #print("percentage = {}%".format(percentage))
+                    pbar.update(percentage)
+        pbar.finish()
+        return output_path
 
     except Exception as e:
         if error_messages_callback:
@@ -1536,13 +1679,14 @@ def main():
                         "large-v1",
                         "large-v2",
                         "large"
-    ]
+                     ]
 
     devices = ["auto", "cuda", "cpu"]
 
     compute_types = ["default", "auto", "int8", "int8_float16", "int16", "float16", "float32"]
 
     if sys.platform == "win32":
+        change_code_page(65001)
         stop_ffmpeg_windows(error_messages_callback=show_error_messages)
     else:
         stop_ffmpeg_linux(error_messages_callback=show_error_messages)
@@ -1555,18 +1699,19 @@ def main():
     parser.add_argument('-m', '--model-name', default="small", help="name of whisper model to use")
     parser.add_argument('-lm', '--list-models', help="List of whisper models name", action='store_true')
     parser.add_argument('-d', '--device', default="auto", help="name of the device to use")
-    parser.add_argument('-ld', '--list-devices', help="List of supported device", action='store_true')
+    parser.add_argument('-ld', '--list-devices', help="List of supported devices", action='store_true')
     parser.add_argument('-ct', '--compute-type', default="auto", help="name of the compute type (quantization) to use")
     parser.add_argument('-lct', '--list-compute-types', help="List of supported compute types", action='store_true')
-    parser.add_argument('-cpu', '--cpu-threads', default=0, help="Number of threads to use when running on CPU")
-    parser.add_argument('-nw', '--num-workers', default=1, help="Number of concurrent calls when running the model")
+    parser.add_argument('-t', '--cpu-threads', default=0, help="Number of threads to use when running on CPU")
+    parser.add_argument('-nw', '--num-workers', default=1, help="Number of concurrent calls when running whisper model")
     parser.add_argument('-S', '--src-language', help="Language code of the audio language spoken in video/audio source_path", default="en")
     parser.add_argument('-D', '--dst-language', help="Desired translation language code for the subtitles", default=None)
-    parser.add_argument('-lwl', '--list-whisper-languages', help="List all whisper supported languages (src_languages)", action='store_true')
-    parser.add_argument('-lgl', '--list-google-languages', help="List all google translate supported languages (dst_languages)", action='store_true')
+    parser.add_argument('-lS', '--list-src-languages', help="List all available src_languages (whisper supported languages)", action='store_true')
+    parser.add_argument('-lD', '--list-dst-languages', help="List all available dst_languages (google translate supported languages)", action='store_true')
     parser.add_argument('-F', '--format', help="Desired subtitle format", default="srt")
-    parser.add_argument('-lf', '--list-formats', help="List all supported subtitle formats", action='store_true')
-    parser.add_argument('-C', '--concurrency', help="Number of concurrent translate API requests to make", type=int, default=10)
+    parser.add_argument('-lF', '--list-formats', help="List all supported subtitle formats", action='store_true')
+    parser.add_argument('-c', '--concurrency', help="Number of concurrent calls for Google Translate API", type=int, default=10)
+    parser.add_argument('-r', '--render', help="Boolean value (True or False) for render subtitle file into video file", type=bool, default=False)
     parser.add_argument('-v', '--version', action='version', version=VERSION)
 
     args = parser.parse_args()
@@ -1604,13 +1749,13 @@ def main():
     whisper_language = WhisperLanguage()
     google_language = GoogleLanguage()
 
-    if args.list_whisper_languages:
+    if args.list_src_languages:
         print("List of whisper supported languages:")
-        for whisper_code, whisper_language in sorted(whisper_language.name_of_code.items()):
+        for whisper_code, whisper_language in (whisper_language.name_of_code.items()):
             print("%-8s : %s" %(whisper_code, whisper_language))
         return 0
 
-    if args.list_google_languages:
+    if args.list_dst_languages:
         print("List of google translate supported languages:")
         for google_code, google_language in sorted(google_language.name_of_code.items()):
             print("%-8s : %s" %(google_code, google_language))
@@ -1651,6 +1796,7 @@ def main():
     invalid_media_filepaths = []
     not_exist_filepaths = []
     argpath = None
+    media_type = None
 
     args_source_path = args.source_path
 
@@ -1677,12 +1823,19 @@ def main():
     if arg_filepaths:
         for argpath in arg_filepaths:
             if os.path.isfile(argpath):
-                if check_file_type(argpath, error_messages_callback=show_error_messages) == 'video' or check_file_type(argpath, error_messages_callback=show_error_messages) == 'audio':
+                if check_file_type(argpath, error_messages_callback=show_error_messages) == 'video':
                     media_filepaths.append(argpath)
+                    media_type = "video"
+                elif check_file_type(argpath, error_messages_callback=show_error_messages) == 'audio':
+                    media_filepaths.append(argpath)
+                    media_type = "audio"
+
                 else:
                     invalid_media_filepaths.append(argpath)
+                    media_type = None
             else:
                 not_exist_filepaths.append(argpath)
+                media_type = None
 
         if invalid_media_filepaths:
             for invalid_media_filepath in invalid_media_filepaths:
@@ -1707,102 +1860,181 @@ def main():
     transcribe_start_time = time.time()
     task = "transcribe"
 
-    if args.src_language == ("ba" or "br" or "fo" or "nn" or "oc" or "tl" or "bo") and do_translate:
+    if args.src_language == "ba" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "br" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "fo" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "nn" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "oc" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "tl" and do_translate:
+        task = "translate"
+        src_language = "en"
+
+    if args.src_language == "bo" and do_translate:
         task = "translate"
         src_language = "en"
 
     for media_filepath in media_filepaths:
-        print("Processing {} :".format(media_filepath))
+        print("Processing {}".format(media_filepath))
 
-        try:
-            total_duration = get_video_duration(media_filepath, error_messages_callback=show_error_messages)
-            segments, info = model.transcribe(media_filepath, beam_size=5, language=src_language, task=task)
-            #marker='█'
-            widgets = ["Performing speech recognition           : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
-            pbar = ProgressBar(widgets=widgets, maxval=100).start()
+        if "rendered" in str(media_filepath):
+            pass
 
-            timed_subtitles = []
-            regions = []
-            transcripts = []
-            for segment in segments:
-                regions.append((segment.start, segment.end))
-                transcripts.append(segment.text)
-                progress = int(int(segment.end)*100/total_duration)
-                pbar.update(progress)
-            pbar.finish()
-            timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
-
-            subtitle_format = args.format
-            base, ext = os.path.splitext(media_filepath)
-            subtitle_filepath = "{base}.{format}".format(base=base, format=subtitle_format)
-
-            writer = SubtitleWriter(regions, transcripts, subtitle_format, error_messages_callback=show_error_messages)
-            writer.write(subtitle_filepath)
-
-            if do_translate:
-                timed_subtitles = writer.timed_subtitles
-                created_regions = []
-                created_subtitles = []
-                for entry in timed_subtitles:
-                    created_regions.append(entry[0])
-                    created_subtitles.append(entry[1])
-
-                prompt = "Translating from %s to %s   : " %(src_language.center(8), dst_language.center(8))
-                widgets = [prompt, Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
-                pbar = ProgressBar(widgets=widgets, maxval=len(timed_subtitles)).start()
-
-                transcript_translator = SentenceTranslator(src=args.src_language, dst=args.dst_language, error_messages_callback=show_error_messages)
-
-                translated_subtitles = []
-                for i, translated_subtitle in enumerate(pool.imap(transcript_translator, created_subtitles)):
-                    translated_subtitles.append(translated_subtitle)
-                    pbar.update(i)
+        else:
+            try:
+                widgets =["Converting to WAV file         : ", Percentage(), ' ', Bar(), ' ', ETA()]
+                pbar = ProgressBar(widgets=widgets, maxval=100).start()
+                wav_converter = WavConverter(progress_callback=show_progress, error_messages_callback=show_error_messages)
+                wav_filepath, sample_rate = wav_converter(media_filepath)
                 pbar.finish()
 
-                translated_subtitle_filepath = subtitle_filepath[ :-4] + '.translated.' + subtitle_format
-                translation_writer = SubtitleWriter(created_regions, translated_subtitles, subtitle_format, error_messages_callback=show_error_messages)
-                translation_writer.write(translated_subtitle_filepath)
+                if args.src_language == "auto":
+                    segments, info = model.transcribe(wav_filepath)
+                    src_language = info.language
+                    print("Detected language              : %s (probability = %f)" %(info.language, info.language_probability))
+                    total_duration = info.duration
 
-            print('Done.')
-            if do_translate:
-                os.remove(subtitle_filepath)
-                print('Translated subtitles file created at    : {}' .format(translated_subtitle_filepath))
-            else:
-                print("Subtitles file created at               : {}".format(subtitle_filepath))
-            print('')
-            completed_tasks += 1
+                    if src_language == "ba" and do_translate:
+                        task = "translate"
+                        src_language = "en"
 
-            if len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
-                transcribe_end_time = time.time()
-                transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
-                transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
-                transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
-                hour, minute, second = transcribe_elapsed_time_str.split(":")
-                msg = "Total transcribe time                   : %s:%s:%s" %(hour.zfill(2), minute, second)
-                print(msg)
+                    if src_language == "br" and do_translate:
+                        task = "translate"
+                        src_language = "en"
 
-        except KeyboardInterrupt:
-            pbar.finish()
-            pool.terminate()
-            pool.close()
-            pool.join()
-            print("Cancelling all tasks")
+                    if src_language == "fo" and do_translate:
+                        task = "translate"
+                        src_language = "en"
 
-            if sys.platform == "win32":
-                stop_ffmpeg_windows(error_messages_callback=show_error_messages)
-            else:
-                stop_ffmpeg_linux(error_messages_callback=show_error_messages)
+                    if src_language == "nn" and do_translate:
+                        task = "translate"
+                        src_language = "en"
 
-            remove_temp_files("wav")
-            return 1
+                    if src_language == "oc" and do_translate:
+                        task = "translate"
+                        src_language = "en"
 
-        except Exception as e:
-            if not KeyboardInterrupt in e:
+                    if src_language == "tl" and do_translate:
+                        task = "translate"
+                        src_language = "en"
+
+                    if src_language == "bo" and do_translate:
+                        task = "translate"
+                        src_language = "en"
+
+                else:
+                    segments, info = model.transcribe(wav_filepath, language=src_language, task=task)
+
+                widgets = ["Performing speech recognition  : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
+                pbar = ProgressBar(widgets=widgets, maxval=100).start()
+
+                timed_subtitles = []
+                regions = []
+                transcripts = []
+                for segment in segments:
+                    progress = int(round(float(segment.end))*100/total_duration)
+                    regions.append((segment.start, segment.end))
+                    transcripts.append(segment.text)
+                    pbar.update(progress)
+                pbar.finish()
+                timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
+
+                subtitle_format = args.format
+                base, ext = os.path.splitext(media_filepath)
+                subtitle_filepath = "{base}.{format}".format(base=base, format=subtitle_format)
+
+                writer = SubtitleWriter(regions, transcripts, subtitle_format, error_messages_callback=show_error_messages)
+                writer.write(subtitle_filepath)
+
+                if do_translate:
+                    timed_subtitles = writer.timed_subtitles
+                    created_regions = []
+                    created_subtitles = []
+                    for entry in timed_subtitles:
+                        created_regions.append(entry[0])
+                        created_subtitles.append(entry[1])
+
+                    prompt = "Translating to %s        : " %(dst_language.center(8))
+                    widgets = [prompt, Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
+                    pbar = ProgressBar(widgets=widgets, maxval=len(timed_subtitles)).start()
+
+                    transcript_translator = SentenceTranslator(src=args.src_language, dst=args.dst_language, error_messages_callback=show_error_messages)
+
+                    translated_subtitles = []
+                    for i, translated_subtitle in enumerate(pool.imap(transcript_translator, created_subtitles)):
+                        translated_subtitles.append(translated_subtitle)
+                        pbar.update(i)
+                    pbar.finish()
+
+                    translated_subtitle_filepath = subtitle_filepath[:-4] + '.translated.' + subtitle_format
+                    translation_writer = SubtitleWriter(created_regions, translated_subtitles, subtitle_format, error_messages_callback=show_error_messages)
+                    translation_writer.write(translated_subtitle_filepath)
+
+                if do_translate:
+                    os.remove(subtitle_filepath)
+                    print('Subtitles file created at      : {}' .format(translated_subtitle_filepath))
+                else:
+                    print("Subtitles file created at      : {}".format(subtitle_filepath))
+
+                if args.render:
+                    base, ext = os.path.splitext(media_filepath)
+                    rendered_media_filepath = "{base}.rendered.{format}".format(base=base, format=ext[1:])
+
+                    subtitle_path = None
+                    if do_translate:
+                        subtitle_path=translated_subtitle_filepath
+                    else:
+                        subtitle_path=subtitle_filepath
+
+                    #result = render_media_with_subtitle(media_filepath, media_type, ext, subtitle_path, rendered_media_filepath, error_messages_callback=show_error_messages)
+
+                    subtitle_renderer = MediaSubtitleRenderer(media_ext=ext, subtitle_path=subtitle_path, output_path=rendered_media_filepath, progress_callback=show_progress, error_messages_callback=show_error_messages)
+                    widgets = [f"Rendering subtitles with {media_type} : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+                    pbar = ProgressBar(widgets=widgets, maxval=100).start()
+                    result = subtitle_renderer(media_filepath)
+                    pbar.finish()
+
+                    if result and os.path.isfile(result):
+                        shutil.copy(result, rendered_media_filepath)
+                        print("Rendered video created at      : {}".format(rendered_media_filepath))
+
+                if not args.render:
+                    completed_tasks += 1
+                else:
+                    if rendered_media_filepath and os.path.isfile(rendered_media_filepath):
+                        completed_tasks += 1
+
+                if len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
+                    print('')
+                    transcribe_end_time = time.time()
+                    transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
+                    transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
+                    transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
+                    hour, minute, second = transcribe_elapsed_time_str.split(":")
+                    msg = "Total running time             : %s:%s:%s" %(hour.zfill(2), minute, second)
+                    print(msg)
+
+
+            except KeyboardInterrupt:
                 pbar.finish()
                 pool.terminate()
                 pool.close()
                 pool.join()
-                print(e)
+                print("Cancelling all tasks")
 
                 if sys.platform == "win32":
                     stop_ffmpeg_windows(error_messages_callback=show_error_messages)
@@ -1811,6 +2043,23 @@ def main():
 
                 remove_temp_files("wav")
                 return 1
+
+            except Exception as e:
+                if not KeyboardInterrupt in e:
+                    pbar.finish()
+                    pool.terminate()
+                    pool.close()
+                    pool.join()
+                    print(e)
+
+                    if sys.platform == "win32":
+                        stop_ffmpeg_windows(error_messages_callback=show_error_messages)
+                    else:
+                        stop_ffmpeg_linux(error_messages_callback=show_error_messages)
+
+                    remove_temp_files("wav")
+                    return 1
+
 
     if pool:
         pool.close()
@@ -1823,6 +2072,7 @@ def main():
         stop_ffmpeg_linux(error_messages_callback=show_error_messages)
 
     remove_temp_files("wav")
+    remove_temp_files(ext[1:])
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
