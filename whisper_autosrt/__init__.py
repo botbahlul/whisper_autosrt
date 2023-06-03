@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.0.8"
+VERSION = "0.0.9"
 #marker='█'
 
 
@@ -1189,6 +1189,8 @@ class WavConverter:
 
     def __call__(self, media_filepath):
         temp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        if "\\" in media_filepath:
+            media_filepath = media_filepath.replace("\\", "/")
         if not os.path.isfile(media_filepath):
             if self.error_messages_callback:
                 self.error_messages_callback("The given file does not exist: {0}".format(media_filepath))
@@ -1570,7 +1572,15 @@ class MediaSubtitleRenderer:
         self.error_messages_callback = error_messages_callback
 
     def __call__(self, media_filepath):
-        temp = tempfile.NamedTemporaryFile(suffix=self.media_ext, delete=False)
+        if "\\" in media_filepath:
+            media_filepath = media_filepath.replace("\\", "/")
+
+        if "\\" in self.subtitle_path:
+            self.subtitle_path = self.subtitle_path.replace("\\", "/")
+
+        if "\\" in self.output_path:
+            self.output_path = self.output_path.replace("\\", "/")
+
         if not os.path.isfile(media_filepath):
             if self.error_messages_callback:
                 self.error_messages_callback("The given file does not exist: {0}".format(media_filepath))
@@ -1590,8 +1600,7 @@ class MediaSubtitleRenderer:
                                 "-y",
                                 "-i", media_filepath,
                                 "-vf", f"subtitles={shlex.quote(self.subtitle_path)}",
-                                temp.name
-                                #output_path
+                                self.output_path
                              ]
 
             ff = FfmpegProgress(ffmpeg_command)
@@ -1601,11 +1610,8 @@ class MediaSubtitleRenderer:
                 if self.progress_callback:
                     self.progress_callback(media_filepath, percentage)
 
-            temp.close()
-            if os.path.isfile(temp.name):
-            #if os.path.isfile(output_path):
-                return temp.name
-                #return output_path
+            if os.path.isfile(self.output_path):
+                return self.output_path
             else:
                 return None
 
@@ -1627,6 +1633,15 @@ class MediaSubtitleRenderer:
 def render_media_with_subtitle(video_path, media_type, media_ext, subtitle_path, output_path, error_messages_callback=None):
 
     try:
+        if "\\" in video_path:
+            video_path = video_path.replace("\\", "/")
+
+        if "\\" in subtitle_path:
+            subtitle_path = subtitle_path.replace("\\", "/")
+
+        if "\\" in output_path:
+            output_path = output_path.replace("\\", "/")
+
         ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_path}"'
         ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         total_duration = float(ffprobe_process.stdout.read().decode().strip())
@@ -1993,6 +2008,11 @@ def main():
                     print("Subtitles file created at      : {}".format(subtitle_filepath))
 
                 if args.render:
+                    if str(args.render) == "true":
+                        args.render = True
+                    if str(args.render) == "false":
+                        args.render = False
+
                     base, ext = os.path.splitext(media_filepath)
                     rendered_media_filepath = "{base}.rendered.{format}".format(base=base, format=ext[1:])
 
@@ -2011,7 +2031,6 @@ def main():
                     pbar.finish()
 
                     if result and os.path.isfile(result):
-                        shutil.copy(result, rendered_media_filepath)
                         print("Rendered video created at      : {}".format(rendered_media_filepath))
 
                 if not args.render:
