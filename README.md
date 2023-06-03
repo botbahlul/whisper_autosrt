@@ -4,7 +4,7 @@
 whisper_autosrt is a simple command line tool made with python to auto generate subtitle/closed caption for any video or audio files using faster_whisper module https://github.com/guillaumekln/faster-whisper and translate it automatically for free using a simple unofficial online Google Translate API.
 
 ### Installation
-If you don't have python on your Windows system you can try compiled version from this git release assets
+If you don't have python on your Windows system you can try the compiled version from this git release assets
 https://github.com/botbahlul/whisper_autosrt/releases
 
 If it doesn't run well then you need to install python on your Windows system.
@@ -32,7 +32,7 @@ pyinstaller --onefile whisper_autosrt.py
 ```
 
 The executable compiled file will be placed by pyinstaller into dist subfolder of your current working folder, so you can just rename and put that compiled file into a folder that has been added to your PATH ENVIRONTMENT so you can execute it from anywhere
-Beware that if you're on Linux system, the compiled file could be very large (about 2,2GB) because pyinstaller will includes all nvidia cuda driver on it.
+Beware that on Linux system the compiled file could be very large (about 2,2GB) because pyinstaller will includes all nvidia cuda driver on it.
 
 I was succesfuly compiled it in Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.8.12 in Debian 9
 
