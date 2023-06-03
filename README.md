@@ -1,7 +1,7 @@
 # whisper_autosrt <a href="https://pypi.python.org/pypi/whisper_autosrt"><img src="https://img.shields.io/pypi/v/whisper_autosrt.svg"></img></a>
   
 ### Auto generate subtitle files for any video / audio files
-whisper_autosrt is a simple command line tool made with python to auto generate subtitle/closed caption for any video or audio files using openai_whisper module and translate it automatically for free using a simple unofficial online Google Translate API.
+whisper_autosrt is a simple command line tool made with python to auto generate subtitle/closed caption for any video or audio files using faster_whisper module https://github.com/guillaumekln/faster-whisper and translate it automatically for free using a simple unofficial online Google Translate API.
 
 ### Installation
 If you don't have python on your Windows system you can try compiled version from this git release assets
@@ -9,11 +9,11 @@ https://github.com/botbahlul/whisper_autosrt/releases
 
 If it doesn't run well then you need to install python on your Windows system.
 
-Just extract those ffmpeg.exe and whisper_autosrt.exe into a folder that has been added to PATH ENVIRONTMET for example in C:\Windows\system32
+Just extract those ffmpeg.exe, ffprobe.exe, and whisper_autosrt.exe into a folder that has been added to PATH ENVIRONTMET for example in C:\Windows\system32 so you can execute them from any folder.
 
 You can get latest version of ffmpeg from https://www.ffmpeg.org/
 
-In Linux you have to install this script with python (version minimal 3.8 ) and install ffmpeg with your linux package manager for example in debian based linux distribution you can type :
+In Linux you have to install this script with python (version minimal 3.8.12) and install ffmpeg with your linux package manager, for example in debian based linux distribution you can type :
 
 ```
 sudo apt update
@@ -22,7 +22,7 @@ sudo apt install -y ffmpeg
 
 To install this whisper_autosrt, just type :
 ```
-pip install whisper_autosrt
+pip install --upgrade whisper_autosrt
 ```
 
 You can try to compile that whisper_autosrt.py script in win/linux folder into a single executable file with pyinstaller by typing these :
@@ -32,6 +32,7 @@ pyinstaller --onefile whisper_autosrt.py
 ```
 
 The executable compiled file will be placed by pyinstaller into dist subfolder of your current working folder, so you can just rename and put that compiled file into a folder that has been added to your PATH ENVIRONTMENT so you can execute it from anywhere
+Beware that if you're on Linux system, the compiled file could be very large (about 2,2GB) because pyinstaller will includes all nvidia cuda driver on it.
 
 I was succesfuly compiled it in Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.8.12 in Debian 9
 
@@ -42,10 +43,10 @@ pip install wheel
 python setup.py bdist_wheel
 ```
 
-Then check the name of the whl file created in dist folder. In case the filename is whisper_autosrt-0.0.1-py2.py3-none-any.whl then you can install that whl file with pip :
+Then check the name of the whl file created in dist folder. In case the filename is whisper_autosrt-0.0.3-py2.py3-none-any.whl then you can install that whl file with pip :
 ```
 cd dist
-pip install whisper_autosrt-0.0.1-py2.py3-none-any.whl
+pip install whisper_autosrt-0.0.3-py2.py3-none-any.whl
 ```
 
 You can also install this script (or any pip package) in ANDROID DEVICES via PYTHON package in TERMUX APP
@@ -67,14 +68,19 @@ pip install whisper_autosrt
 ### Simple usage example 
 
 ```
-whisper_autosrt --list-whisper-languages
-whisper_autosrt --list-google-languages
+whisper_autosrt --list-src-languages
+whisper_autosrt --list-dst-languages
 whisper_autosrt -S zh -D en "Episode 1.mp4"
+```
+
+If you don't know exactly what language spoken on the video/audio file, you can try to use \'-S auto\', so this app will try to auto detect the language.
+```
+whisper_autosrt -S auto -D en ""Episode 1.mp4""
 ```
 
 For multiple video/audio files you can use wildcard e.g:
 ```
-whisper_autosrt -S zh -D en "C:\Movies\*.mp4"
+whisper_autosrt -S zh -D en C:\Movies\*.mp4
 ```
 
 or separate them with space character e.g:
@@ -84,7 +90,7 @@ whisper_autosrt -S zh -D en "Episode 1.mp4" "Episode 2.mp4"
 
 If you don't need translations just type :
 ```
-whisper_autosrt -S zh "Episode 1.mp4"
+whisper_autosrt -S auto "Episode 1.mp4"
 ```
 
 ### Usage
