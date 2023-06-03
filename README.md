@@ -90,8 +90,8 @@ whisper_autosrt -S zh "Episode 1.mp4"
 ### Usage
 
 ```
-usage: whisper_autosrt [-h] [-m MODEL_NAME] [-lm] [-S SRC_LANGUAGE] [-D DST_LANGUAGE] [-lwl] [-lgl] [-F FORMAT] [-lf]
-                       [-C CONCURRENCY] [-v]
+usage: whisper_autosrt [-h] [-m MODEL_NAME] [-lm] [-d DEVICE] [-ld] [-ct COMPUTE_TYPE] [-lct] [-t CPU_THREADS] [-nw NUM_WORKERS]
+                       [-S SRC_LANGUAGE] [-D DST_LANGUAGE] [-lS] [-lD] [-F FORMAT] [-lF] [-c CONCURRENCY] [-r RENDER] [-v]
                        [source_path ...]
 
 positional arguments:
@@ -101,21 +101,34 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -m MODEL_NAME, --model-name MODEL_NAME
-                        name of the Whisper model to use
-  -lm, --list-models    List of Whisper models name
+                        name of whisper model to use
+  -lm, --list-models    List of whisper models name
+  -d DEVICE, --device DEVICE
+                        name of the device to use
+  -ld, --list-devices   List of supported devices
+  -ct COMPUTE_TYPE, --compute-type COMPUTE_TYPE
+                        name of the compute type (quantization) to use
+  -lct, --list-compute-types
+                        List of supported compute types
+  -t CPU_THREADS, --cpu-threads CPU_THREADS
+                        Number of threads to use when running on CPU
+  -nw NUM_WORKERS, --num-workers NUM_WORKERS
+                        Number of concurrent calls when running whisper model
   -S SRC_LANGUAGE, --src-language SRC_LANGUAGE
                         Language code of the audio language spoken in video/audio source_path
   -D DST_LANGUAGE, --dst-language DST_LANGUAGE
                         Desired translation language code for the subtitles
-  -lwl, --list-whisper-languages
-                        List all whisper supported languages
-  -lgl, --list-google-languages
-                        List all google translate supported languages
+  -lS, --list-src-languages
+                        List all available src_languages (whisper supported languages)
+  -lD, --list-dst-languages
+                        List all available dst_languages (google translate supported languages)
   -F FORMAT, --format FORMAT
                         Desired subtitle format
-  -lf, --list-formats   List all supported subtitle formats
-  -C CONCURRENCY, --concurrency CONCURRENCY
-                        Number of concurrent API requests to make
+  -lF, --list-formats   List all supported subtitle formats
+  -c CONCURRENCY, --concurrency CONCURRENCY
+                        Number of concurrent calls for Google Translate API
+  -r RENDER, --render RENDER
+                        Boolean value (True or False) for render subtitle file into video file
   -v, --version         show program's version number and exit
 ```
 
