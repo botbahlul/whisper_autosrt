@@ -9,7 +9,7 @@ https://github.com/botbahlul/whisper_autosrt/releases
 
 If it doesn't run well then you need to install python on your Windows system.
 
-Just extract those ffmpeg.exe, ffprobe.exe, and whisper_autosrt.exe into a folder that has been added to PATH ENVIRONTMET for example in C:\Windows\system32 so you can execute them from any folder.
+Just extract those ffmpeg.exe, ffprobe.exe, and whisper_autosrt.exe into a folder that has been added to PATH ENVIRONMENT for example in C:\Windows\system32 so you can execute them from any folder.
 
 You can get latest version of ffmpeg from https://www.ffmpeg.org/
 
