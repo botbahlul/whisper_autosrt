@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.0.7"
+VERSION = "0.0.8"
 #marker='█'
 
 
@@ -1704,7 +1704,7 @@ def main():
     parser.add_argument('-lct', '--list-compute-types', help="List of supported compute types", action='store_true')
     parser.add_argument('-t', '--cpu-threads', default=0, help="Number of threads to use when running on CPU")
     parser.add_argument('-nw', '--num-workers', default=1, help="Number of concurrent calls when running whisper model")
-    parser.add_argument('-S', '--src-language', help="Language code of the audio language spoken in video/audio source_path", default="en")
+    parser.add_argument('-S', '--src-language', help="Language code of the audio language spoken in video/audio source_path", default="auto")
     parser.add_argument('-D', '--dst-language', help="Desired translation language code for the subtitles", default=None)
     parser.add_argument('-lS', '--list-src-languages', help="List all available src_languages (whisper supported languages)", action='store_true')
     parser.add_argument('-lD', '--list-dst-languages', help="List all available dst_languages (google translate supported languages)", action='store_true')
@@ -1859,6 +1859,7 @@ def main():
     transcribe_elapsed_time = None
     transcribe_start_time = time.time()
     task = "transcribe"
+    total_duration = 0
 
     if args.src_language == "ba" and do_translate:
         task = "translate"
@@ -1938,6 +1939,7 @@ def main():
 
                 else:
                     segments, info = model.transcribe(wav_filepath, language=src_language, task=task)
+                    total_duration = info.duration
 
                 widgets = ["Performing speech recognition  : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
                 pbar = ProgressBar(widgets=widgets, maxval=100).start()
