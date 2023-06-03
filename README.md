@@ -34,7 +34,7 @@ pyinstaller --onefile whisper_autosrt.py
 The executable compiled file will be placed by pyinstaller into dist subfolder of your current working folder, so you can just rename and put that compiled file into a folder that has been added to your PATH ENVIRONMENT so you can execute it from anywhere. 
 Beware that on Linux system the compiled file could be very large (about 2.2GB) because pyinstaller will include all nvidia cuda driver on it.
 
-I was succesfuly compiled it in Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.8.12 in Debian 9
+I was succesfuly compiled it on Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.8.12 on Debian 9.
 
 Another alternative way to install this script with python is by cloning this git (or downloading this git as zip then extract it into a folder), and then just type :
 
@@ -49,7 +49,7 @@ cd dist
 pip install whisper_autosrt-0.0.3-py2.py3-none-any.whl
 ```
 
-You can also install this script (or any pip package) in ANDROID DEVICES via PYTHON package in TERMUX APP
+You can also install this script (or any pip package) in ANDROID DEVICES via PYTHON package in TERMUX APP.
 
 https://github.com/termux/termux-app/releases/tag/v0.118.0
 
