@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.0.9"
+VERSION = "0.1.0"
 #marker='█'
 
 
@@ -1904,158 +1904,173 @@ def main():
         task = "translate"
         src_language = "en"
 
+    if str(args.render) == "true":
+        args.render = True
+    if str(args.render) == "false":
+        args.render = False
+
+    for media_filepath in media_filepaths:
+        if ".rendered." in str(media_filepath):
+            media_filepaths.remove(media_filepath)
+
     for media_filepath in media_filepaths:
         print("Processing {}".format(media_filepath))
+        try:
+            widgets =["Converting to WAV file         : ", Percentage(), ' ', Bar(), ' ', ETA()]
+            pbar = ProgressBar(widgets=widgets, maxval=100).start()
+            wav_converter = WavConverter(progress_callback=show_progress, error_messages_callback=show_error_messages)
+            wav_filepath, sample_rate = wav_converter(media_filepath)
+            pbar.finish()
 
-        if "rendered" in str(media_filepath):
-            pass
+            if args.src_language == "auto":
+                segments, info = model.transcribe(wav_filepath)
+                src_language = info.language
+                print("Detected language              : %s (probability = %f)" %(info.language, info.language_probability))
+                total_duration = info.duration
 
-        else:
-            try:
-                widgets =["Converting to WAV file         : ", Percentage(), ' ', Bar(), ' ', ETA()]
-                pbar = ProgressBar(widgets=widgets, maxval=100).start()
-                wav_converter = WavConverter(progress_callback=show_progress, error_messages_callback=show_error_messages)
-                wav_filepath, sample_rate = wav_converter(media_filepath)
+                if src_language == "ba" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "br" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "fo" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "nn" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "oc" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "tl" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+                if src_language == "bo" and do_translate:
+                    task = "translate"
+                    src_language = "en"
+
+            else:
+                segments, info = model.transcribe(wav_filepath, language=src_language, task=task)
+                total_duration = info.duration
+
+            widgets = ["Performing speech recognition  : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
+            pbar = ProgressBar(widgets=widgets, maxval=100).start()
+
+            timed_subtitles = []
+            regions = []
+            transcripts = []
+            for segment in segments:
+                progress = int(round(float(segment.end))*100/total_duration)
+                regions.append((segment.start, segment.end))
+                transcripts.append(segment.text)
+                pbar.update(progress)
+            pbar.finish()
+            timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
+
+            subtitle_format = args.format
+            base, ext = os.path.splitext(media_filepath)
+            subtitle_filepath = "{base}.{format}".format(base=base, format=subtitle_format)
+
+            writer = SubtitleWriter(regions, transcripts, subtitle_format, error_messages_callback=show_error_messages)
+            writer.write(subtitle_filepath)
+
+            if do_translate:
+                timed_subtitles = writer.timed_subtitles
+                created_regions = []
+                created_subtitles = []
+                for entry in timed_subtitles:
+                    created_regions.append(entry[0])
+                    created_subtitles.append(entry[1])
+
+                prompt = "Translating to %s        : " %(dst_language.center(8))
+                widgets = [prompt, Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
+                pbar = ProgressBar(widgets=widgets, maxval=len(timed_subtitles)).start()
+
+                transcript_translator = SentenceTranslator(src=args.src_language, dst=args.dst_language, error_messages_callback=show_error_messages)
+
+                translated_subtitles = []
+                for i, translated_subtitle in enumerate(pool.imap(transcript_translator, created_subtitles)):
+                    translated_subtitles.append(translated_subtitle)
+                    pbar.update(i)
                 pbar.finish()
 
-                if args.src_language == "auto":
-                    segments, info = model.transcribe(wav_filepath)
-                    src_language = info.language
-                    print("Detected language              : %s (probability = %f)" %(info.language, info.language_probability))
-                    total_duration = info.duration
+                translated_subtitle_filepath = subtitle_filepath[:-4] + '.translated.' + subtitle_format
+                translation_writer = SubtitleWriter(created_regions, translated_subtitles, subtitle_format, error_messages_callback=show_error_messages)
+                translation_writer.write(translated_subtitle_filepath)
 
-                    if src_language == "ba" and do_translate:
-                        task = "translate"
-                        src_language = "en"
+            if do_translate:
+                os.remove(subtitle_filepath)
+                print('Subtitles file created at      : {}' .format(translated_subtitle_filepath))
+            else:
+                print("Subtitles file created at      : {}".format(subtitle_filepath))
 
-                    if src_language == "br" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                    if src_language == "fo" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                    if src_language == "nn" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                    if src_language == "oc" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                    if src_language == "tl" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                    if src_language == "bo" and do_translate:
-                        task = "translate"
-                        src_language = "en"
-
-                else:
-                    segments, info = model.transcribe(wav_filepath, language=src_language, task=task)
-                    total_duration = info.duration
-
-                widgets = ["Performing speech recognition  : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
-                pbar = ProgressBar(widgets=widgets, maxval=100).start()
-
-                timed_subtitles = []
-                regions = []
-                transcripts = []
-                for segment in segments:
-                    progress = int(round(float(segment.end))*100/total_duration)
-                    regions.append((segment.start, segment.end))
-                    transcripts.append(segment.text)
-                    pbar.update(progress)
-                pbar.finish()
-                timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
-
-                subtitle_format = args.format
+            if args.render:
                 base, ext = os.path.splitext(media_filepath)
-                subtitle_filepath = "{base}.{format}".format(base=base, format=subtitle_format)
+                rendered_media_filepath = "{base}.rendered.{format}".format(base=base, format=ext[1:])
 
-                writer = SubtitleWriter(regions, transcripts, subtitle_format, error_messages_callback=show_error_messages)
-                writer.write(subtitle_filepath)
-
+                subtitle_path = None
                 if do_translate:
-                    timed_subtitles = writer.timed_subtitles
-                    created_regions = []
-                    created_subtitles = []
-                    for entry in timed_subtitles:
-                        created_regions.append(entry[0])
-                        created_subtitles.append(entry[1])
-
-                    prompt = "Translating to %s        : " %(dst_language.center(8))
-                    widgets = [prompt, Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
-                    pbar = ProgressBar(widgets=widgets, maxval=len(timed_subtitles)).start()
-
-                    transcript_translator = SentenceTranslator(src=args.src_language, dst=args.dst_language, error_messages_callback=show_error_messages)
-
-                    translated_subtitles = []
-                    for i, translated_subtitle in enumerate(pool.imap(transcript_translator, created_subtitles)):
-                        translated_subtitles.append(translated_subtitle)
-                        pbar.update(i)
-                    pbar.finish()
-
-                    translated_subtitle_filepath = subtitle_filepath[:-4] + '.translated.' + subtitle_format
-                    translation_writer = SubtitleWriter(created_regions, translated_subtitles, subtitle_format, error_messages_callback=show_error_messages)
-                    translation_writer.write(translated_subtitle_filepath)
-
-                if do_translate:
-                    os.remove(subtitle_filepath)
-                    print('Subtitles file created at      : {}' .format(translated_subtitle_filepath))
+                    subtitle_path=translated_subtitle_filepath
                 else:
-                    print("Subtitles file created at      : {}".format(subtitle_filepath))
+                    subtitle_path=subtitle_filepath
 
-                if args.render:
-                    if str(args.render) == "true":
-                        args.render = True
-                    if str(args.render) == "false":
-                        args.render = False
+                #result = render_media_with_subtitle(media_filepath, media_type, ext, subtitle_path, rendered_media_filepath, error_messages_callback=show_error_messages)
 
-                    base, ext = os.path.splitext(media_filepath)
-                    rendered_media_filepath = "{base}.rendered.{format}".format(base=base, format=ext[1:])
+                subtitle_renderer = MediaSubtitleRenderer(media_ext=ext, subtitle_path=subtitle_path, output_path=rendered_media_filepath, progress_callback=show_progress, error_messages_callback=show_error_messages)
+                widgets = [f"Rendering subtitles with {media_type} : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+                pbar = ProgressBar(widgets=widgets, maxval=100).start()
+                result = subtitle_renderer(media_filepath)
+                pbar.finish()
 
-                    subtitle_path = None
-                    if do_translate:
-                        subtitle_path=translated_subtitle_filepath
-                    else:
-                        subtitle_path=subtitle_filepath
+                if result and os.path.isfile(result):
+                    print("Rendered video created at      : {}".format(rendered_media_filepath))
 
-                    #result = render_media_with_subtitle(media_filepath, media_type, ext, subtitle_path, rendered_media_filepath, error_messages_callback=show_error_messages)
-
-                    subtitle_renderer = MediaSubtitleRenderer(media_ext=ext, subtitle_path=subtitle_path, output_path=rendered_media_filepath, progress_callback=show_progress, error_messages_callback=show_error_messages)
-                    widgets = [f"Rendering subtitles with {media_type} : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
-                    pbar = ProgressBar(widgets=widgets, maxval=100).start()
-                    result = subtitle_renderer(media_filepath)
-                    pbar.finish()
-
-                    if result and os.path.isfile(result):
-                        print("Rendered video created at      : {}".format(rendered_media_filepath))
-
-                if not args.render:
+            if not args.render:
+                completed_tasks += 1
+            else:
+                if rendered_media_filepath and os.path.isfile(rendered_media_filepath):
                     completed_tasks += 1
-                else:
-                    if rendered_media_filepath and os.path.isfile(rendered_media_filepath):
-                        completed_tasks += 1
 
-                if len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
-                    print('')
-                    transcribe_end_time = time.time()
-                    transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
-                    transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
-                    transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
-                    hour, minute, second = transcribe_elapsed_time_str.split(":")
-                    msg = "Total running time             : %s:%s:%s" %(hour.zfill(2), minute, second)
-                    print(msg)
+            print("")
+            if len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
+                transcribe_end_time = time.time()
+                transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
+                transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
+                transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
+                hour, minute, second = transcribe_elapsed_time_str.split(":")
+                msg = "Total running time             : %s:%s:%s" %(hour.zfill(2), minute, second)
+                print(msg)
 
 
-            except KeyboardInterrupt:
+        except KeyboardInterrupt:
+            pbar.finish()
+            pool.terminate()
+            pool.close()
+            pool.join()
+            print("Cancelling all tasks")
+
+            if sys.platform == "win32":
+                stop_ffmpeg_windows(error_messages_callback=show_error_messages)
+            else:
+                stop_ffmpeg_linux(error_messages_callback=show_error_messages)
+
+            remove_temp_files("wav")
+            return 1
+
+        except Exception as e:
+            if not KeyboardInterrupt in e:
                 pbar.finish()
                 pool.terminate()
                 pool.close()
                 pool.join()
-                print("Cancelling all tasks")
+                print(e)
 
                 if sys.platform == "win32":
                     stop_ffmpeg_windows(error_messages_callback=show_error_messages)
@@ -2064,23 +2079,6 @@ def main():
 
                 remove_temp_files("wav")
                 return 1
-
-            except Exception as e:
-                if not KeyboardInterrupt in e:
-                    pbar.finish()
-                    pool.terminate()
-                    pool.close()
-                    pool.join()
-                    print(e)
-
-                    if sys.platform == "win32":
-                        stop_ffmpeg_windows(error_messages_callback=show_error_messages)
-                    else:
-                        stop_ffmpeg_linux(error_messages_callback=show_error_messages)
-
-                    remove_temp_files("wav")
-                    return 1
-
 
     if pool:
         pool.close()
@@ -2093,7 +2091,7 @@ def main():
         stop_ffmpeg_linux(error_messages_callback=show_error_messages)
 
     remove_temp_files("wav")
-    remove_temp_files(ext[1:])
+
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
