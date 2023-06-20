@@ -12,9 +12,10 @@ except ImportError:
 from whisper_autosrt import VERSION
 
 long_description = (
-    'whisper_autosrt is a command line utility for automatic speech recognition and subtitle generation. '
-    'It takes video or audio files as input, generate transcriptions for them and optionally translates  '
-    'them to a different language, and finally saves the resulting subtitles file to disk.               '
+    'whisper_autosrt is a command line utility for automatic speech recognition and subtitle generation  '
+    'using faster_whisper module which is a reimplementation of OpenAI Whisper module. It takes video or '
+    'audio files as input, generate transcriptions for them and optionally translates them to a different'
+    'language, and finally saves the resulting subtitles file to disk.                                   '
     'It supports a variety of input and output languages and can currently produce subtitles in SRT, VTT,'
     'JSON, and RAW format.'
 )

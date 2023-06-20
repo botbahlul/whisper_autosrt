@@ -29,8 +29,10 @@ from faster_whisper import WhisperModel
 import ctypes
 import shutil
 
-VERSION = "0.1.5"
+
+VERSION = "0.1.6"
 #marker='█'
+
 
 class WhisperLanguage:
     def __init__(self):
@@ -1059,8 +1061,8 @@ google_unsupported_languages = ["auto", "ba", "br", "fo", "nn", "oc", "tl", "bo"
 class WavConverter:
     @staticmethod
     def which(program):
-        def is_exe(media_filepath):
-            return os.path.isfile(media_filepath) and os.access(media_filepath, os.X_OK)
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
         fpath, _ = os.path.split(program)
         if fpath:
             if is_exe(program):
@@ -1071,6 +1073,14 @@ class WavConverter:
                 exe_file = os.path.join(path, program)
                 if is_exe(exe_file):
                     return exe_file
+        return None
+
+    @staticmethod
+    def ffprobe_check():
+        if WavConverter.which("ffprobe"):
+            return "ffprobe"
+        if WavConverter.which("ffprobe.exe"):
+            return "ffprobe.exe"
         return None
 
     @staticmethod
@@ -1095,63 +1105,65 @@ class WavConverter:
 
         if not os.path.isfile(media_filepath):
             if self.error_messages_callback:
-                self.error_messages_callback(f"The given file does not exist: '{media_filepath}'")
+                self.error_messages_callback(f"The given file does not exist: {media_filepath}")
             else:
-                print(f"The given file does not exist: '{media_filepath}'")
-                raise Exception(f"Invalid file: '{media_filepath}'")
+                print(f"The given file does not exist: {media_filepath}")
+                raise Exception(f"Invalid file: {media_filepath}")
+
+        if not self.ffprobe_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("Cannot find ffprobe executable")
+            else:
+                print("Cannot find ffprobe executable")
+                raise Exception("Dependency not found: ffprobe")
+
         if not self.ffmpeg_check():
             if self.error_messages_callback:
-                self.error_messages_callback("ffmpeg: Executable not found on machine.")
+                self.error_messages_callback("Cannot find ffmpeg executable")
             else:
-                print("ffmpeg: Executable not found on machine.")
+                print("Cannot find ffmpeg executable")
                 raise Exception("Dependency not found: ffmpeg")
 
         ffmpeg_command = [
-                            "ffmpeg",
-                            "-y",
-                            "-i", media_filepath,
-                            "-ac", str(self.channels),
-                            "-ar", str(self.rate),
-                            "-loglevel", "error",
-                            "-hide_banner",
-                            "-progress", "-", "-nostats",
+                            'ffmpeg',
+                            '-hide_banner',
+                            '-loglevel', 'error',
+                            '-v', 'error',
+                            '-y',
+                            '-i', media_filepath,
+                            '-ac', str(self.channels),
+                            '-ar', str(self.rate),
+                            '-progress', '-', '-nostats',
                             temp.name
                          ]
 
-
         try:
-            info = f"Converting to a temporary WAV file"
+            media_file_display_name = os.path.basename(media_filepath).split('/')[-1]
+            info = f"Converting '{media_file_display_name}' to a temporary WAV file"
+            start_time = time.time()
 
-            # RUNNING ffmpeg WITHOUT SHOWING PROGRESSS
-            #use_shell = True if os.name == "nt" else False
-            #subprocess.check_output(command, stdin=open(os.devnull), shell=use_shell)
+            ffprobe_command = [
+                                'ffprobe',
+                                '-hide_banner',
+                                '-v', 'error',
+                                '-loglevel', 'error',
+                                '-show_entries',
+                                'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1',
+                                media_filepath
+                              ]
 
-
-            # RUNNING ffmpeg WITH SHOWING PROGRESSS
-            '''
-            # RUNNING ffmpeg WITH ffmpeg_progress_yield
-            ff = FfmpegProgress(command)
-            percentage = 0
-            for progress in ff.run_command_with_progress():
-                percentage = progress
-                if self.progress_callback:
-                    self.progress_callback(info, media_filepath, percentage)
-            temp.close()
-            '''
-
-            # RUNNING ffmpeg_command WITHOUT ffmpeg_progress_yield
-            ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-
+            ffprobe_process = None
             if sys.platform == "win32":
-                ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                ffprobe_process = subprocess.Popen(ffprobe_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
 
-            total_duration = float(ffprobe_process.stdout.read().decode('utf-8').strip())
+            total_duration = float(ffprobe_process.strip())
 
-
+            process = None
             if sys.platform == "win32":
-                process = subprocess.Popen(ffmpeg_command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -1171,7 +1183,7 @@ class WavConverter:
                     if current_duration>0:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
                         if self.progress_callback:
-                            self.progress_callback(info, media_filepath, percentage)
+                            self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             temp.close()
 
@@ -1376,7 +1388,7 @@ class SubtitleWriter:
             if saved_subtitle_filepath:
                 subtitle_file_base, subtitle_file_ext = os.path.splitext(saved_subtitle_filepath)
                 if not subtitle_file_ext:
-                    saved_subtitle_filepath = "{base}.{format}".format(base=subtitle_file_base, format=self.format)
+                    saved_subtitle_filepath = f"{subtitle_file_base}.{self.format}"
                 else:
                     saved_subtitle_filepath = declared_subtitle_filepath
             with open(saved_subtitle_filepath, 'wb') as f:
@@ -1400,6 +1412,30 @@ class SubtitleWriter:
 
 
 class SubtitleStreamParser:
+    @staticmethod
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
+        else:
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    @staticmethod
+    def ffprobe_check():
+        if SubtitleStreamParser.which("ffprobe"):
+            return "ffprobe"
+        if SubtitleStreamParser.which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
     def __init__(self, error_messages_callback=None):
         self.error_messages_callback = error_messages_callback
         self._indexes = []
@@ -1407,35 +1443,14 @@ class SubtitleStreamParser:
         self._timed_subtitles = []
         self._number_of_streams = 0
 
-    def __call__(self, media_filepath):
-        if "\\" in media_filepath:
-            media_filepath = media_filepath.replace("\\", "/")
-        subtitle_streams = self.get_subtitle_streams(media_filepath)
-        subtitle_streams_data = []
-        if subtitle_streams:
-            for subtitle_stream in subtitle_streams:
-                subtitle_stream_index = subtitle_stream['index']
-                subtitle_stream_language = subtitle_stream['language']
-                #print(f"Stream Index: {subtitle_stream_index}, Language: {subtitle_stream_language}")
-                subtitle_streams_data.append((subtitle_stream_index, subtitle_stream_language))
-
-        subtitle_data = []
-        subtitle_contents = []
-
-        for subtitle_stream_index in range(len(subtitle_streams)):
-            index, language = subtitle_streams_data[subtitle_stream_index]
-            self._indexes.append(index)
-            self._languages.append(language)
-            self._timed_subtitles.append(self.get_timed_subtitles(media_filepath, subtitle_stream_index+1))
-            subtitle_data.append((index, language, self.get_timed_subtitles(media_filepath, subtitle_stream_index+1)))
-
-        self._number_of_streams = len(subtitle_data)
-        return subtitle_data
 
     def get_subtitle_streams(self, media_filepath):
+
         ffprobe_cmd = [
                         'ffprobe',
-                        '-v', 'quiet',
+                        '-hide_banner',
+                        '-v', 'error',
+                        '-loglevel', 'error',
                         '-print_format', 'json',
                         '-show_entries', 'stream=index:stream_tags=language',
                         '-select_streams', 's',
@@ -1443,7 +1458,12 @@ class SubtitleStreamParser:
                       ]
 
         try:
-            result = subprocess.run(ffprobe_cmd, capture_output=True, text=True)
+            result = None
+            if sys.platform == "win32":
+                result = subprocess.run(ffprobe_cmd, stdin=open(os.devnull), capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                result = subprocess.run(ffprobe_cmd, stdin=open(os.devnull), capture_output=True, text=True)
+
             output = result.stdout
 
             streams = json.loads(output)['streams']
@@ -1481,8 +1501,12 @@ class SubtitleStreamParser:
             return None
 
     def get_timed_subtitles(self, media_filepath, subtitle_stream_index):
+
         ffmpeg_cmd = [
                         'ffmpeg',
+                        '-hide_banner',
+                        '-loglevel', 'error',
+                        '-v', 'error',
                         '-i', media_filepath,
                         '-map', f'0:s:{subtitle_stream_index-1}',
                         '-f', 'srt',
@@ -1490,9 +1514,13 @@ class SubtitleStreamParser:
                      ]
 
         try:
-            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            result = None
+            if sys.platform == "win32":
+                result = subprocess.run(ffmpeg_cmd, stdin=open(os.devnull), capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                result = subprocess.run(ffmpeg_cmd, stdin=open(os.devnull), capture_output=True, text=True)
+
             output = result.stdout
-			#print(output)
 
             timed_subtitles = []
             subtitle_data = []
@@ -1569,6 +1597,40 @@ class SubtitleStreamParser:
             if self.languages()[i] == language:
                 return self.timed_subtitles()[i]
 
+    def __call__(self, media_filepath):
+        if "\\" in media_filepath:
+            media_filepath = media_filepath.replace("\\", "/")
+
+        if not self.ffprobe_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("Cannot find ffprobe executable")
+            else:
+                print("Cannot find ffprobe executable")
+                raise Exception("Dependency not found: ffprobe")
+
+        subtitle_streams = self.get_subtitle_streams(media_filepath)
+        subtitle_streams_data = []
+        if subtitle_streams:
+            for subtitle_stream in subtitle_streams:
+                subtitle_stream_index = subtitle_stream['index']
+                subtitle_stream_language = subtitle_stream['language']
+                #print(f"Stream Index: {subtitle_stream_index}, Language: {subtitle_stream_language}")
+                subtitle_streams_data.append((subtitle_stream_index, subtitle_stream_language))
+
+        subtitle_data = []
+        subtitle_contents = []
+
+        for subtitle_stream_index in range(len(subtitle_streams)):
+            index, language = subtitle_streams_data[subtitle_stream_index]
+            self._indexes.append(index)
+            self._languages.append(language)
+            self._timed_subtitles.append(self.get_timed_subtitles(media_filepath, subtitle_stream_index+1))
+            subtitle_data.append((index, language, self.get_timed_subtitles(media_filepath, subtitle_stream_index+1)))
+
+        self._number_of_streams = len(subtitle_data)
+
+        return subtitle_data
+
 
 class MediaSubtitleRenderer:
     @staticmethod
@@ -1595,8 +1657,17 @@ class MediaSubtitleRenderer:
             return "ffmpeg.exe"
         return None
 
-    def __init__(self, subtitle_path=None, output_path=None, progress_callback=None, error_messages_callback=None):
+    @staticmethod
+    def ffprobe_check():
+        if MediaSubtitleRenderer.which("ffprobe"):
+            return "ffprobe"
+        if MediaSubtitleRenderer.which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
+    def __init__(self, subtitle_path=None, language=None, output_path=None, progress_callback=None, error_messages_callback=None):
         self.subtitle_path = subtitle_path
+        self.language = language
         self.output_path = output_path
         self.progress_callback = progress_callback
         self.error_messages_callback = error_messages_callback
@@ -1617,53 +1688,65 @@ class MediaSubtitleRenderer:
             else:
                 print(f"The given file does not exist: {media_filepath}")
                 raise Exception(f"Invalid file: {media_filepath}")
+
+        if not self.ffprobe_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("Cannot find ffprobe executable")
+            else:
+                print("Cannot find ffprobe executable")
+                raise Exception("Dependency not found: ffprobe")
+
         if not self.ffmpeg_check():
             if self.error_messages_callback:
-                self.error_messages_callback("Cannot find ffmpeg executable on this machine")
+                self.error_messages_callback("Cannot find ffmpeg executable")
             else:
-                print("Cannot find ffmpeg executable on this machine")
+                print("Cannot find ffmpeg executable")
                 raise Exception("Dependency not found: ffmpeg")
 
         try:
-            scale_switch = "'trunc(iw/2)*2':'trunc(ih/2)*2'"
+            scale_switch = "'trunc(iw/2)*2'\:'trunc(ih/2)*2'"
             ffmpeg_command = [
-                                "ffmpeg",
-                                "-y",
-                                "-i", media_filepath,
-                                "-vf", f"subtitles={shlex.quote(self.subtitle_path)},scale={scale_switch}",
-                                "-c:v", "libx264",
-                                "-crf", "23",
-                                "-preset", "medium",
-                                "-c:a", "copy",
-                                "-progress", "-", "-nostats",
+                                'ffmpeg',
+                                '-hide_banner',
+                                '-loglevel', 'error',
+                                '-v', 'error',
+                                '-y',
+                                '-i', media_filepath,
+                                '-vf', f'subtitles={shlex.quote(self.subtitle_path)},scale={scale_switch}',
+                                '-c:v', 'libx264',
+                                '-crf', '23',
+                                '-preset', 'medium',
+                                '-c:a', 'copy',
+                                '-progress', '-', '-nostats',
                                 self.output_path
                              ]
 
-            info = f"Rendering subtitles file into {media_type} file : "
+            media_file_display_name = os.path.basename(media_filepath).split('/')[-1]
+            info = f"Rendering subtitles file into '{media_file_display_name}'"
+            start_time = time.time()
 
-            '''
-            # RUNNING ffmpeg_command USING ffmpeg_progress_yield MODULE
-            ff = FfmpegProgress(ffmpeg_command)
-            percentage = 0
-            for progress in ff.run_command_with_progress():
-                percentage = progress
-                if self.progress_callback:
-                    self.progress_callback(info, media_filepath, percentage)
-            '''
+            ffprobe_command = [
+                                'ffprobe',
+                                '-hide_banner',
+                                '-v', 'error',
+                                '-loglevel', 'error',
+                                '-show_entries',
+                                'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1',
+                                media_filepath
+                              ]
 
-            # RUNNING ffmpeg_command WITHOUT ffmpeg_progress_yield MODULE
-            ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-
+            ffprobe_process = None
             if sys.platform == "win32":
-                ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                ffprobe_process = subprocess.Popen(ffprobe_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
 
-            total_duration = float(ffprobe_process.stdout.read().decode('utf-8').strip())
+            total_duration = float(ffprobe_process.strip())
 
-
+            process = None
             if sys.platform == "win32":
-                process = subprocess.Popen(ffmpeg_command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -1683,7 +1766,7 @@ class MediaSubtitleRenderer:
                     if current_duration>0:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
                         if self.progress_callback:
-                            self.progress_callback(info, media_filepath, percentage)
+                            self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             if os.path.isfile(self.output_path):
                 return self.output_path
@@ -1708,8 +1791,8 @@ class MediaSubtitleRenderer:
 class MediaSubtitleEmbedder:
     @staticmethod
     def which(program):
-        def is_exe(media_filepath):
-            return os.path.isfile(media_filepath) and os.access(media_filepath, os.X_OK)
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
         fpath, _ = os.path.split(program)
         if fpath:
             if is_exe(program):
@@ -1723,6 +1806,14 @@ class MediaSubtitleEmbedder:
         return None
 
     @staticmethod
+    def ffprobe_check():
+        if MediaSubtitleEmbedder.which("ffprobe"):
+            return "ffprobe"
+        if MediaSubtitleEmbedder.which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
+    @staticmethod
     def ffmpeg_check():
         if MediaSubtitleEmbedder.which("ffmpeg"):
             return "ffmpeg"
@@ -1730,7 +1821,7 @@ class MediaSubtitleEmbedder:
             return "ffmpeg.exe"
         return None
 
-    def __init__(self, subtitle_path=None, language="eng", output_path=None, progress_callback=None, error_messages_callback=None):
+    def __init__(self, subtitle_path=None, language=None, output_path=None, progress_callback=None, error_messages_callback=None):
         self.subtitle_path = subtitle_path
         self.language = language
         self.output_path = output_path
@@ -1744,25 +1835,28 @@ class MediaSubtitleEmbedder:
 
         command = [
                     'ffprobe',
-                    '-v', 'quiet',
+                    '-hide_banner',
+                    '-v', 'error',
+                    '-loglevel', 'error',
                     '-of', 'json',
                     '-show_entries',
                     'format:stream',
                     media_filepath
                   ]
 
+        output = None
         if sys.platform == "win32":
-            output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
+            output = subprocess.run(command, stdin=open(os.devnull), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         else:
-            output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            output = subprocess.run(command, stdin=open(os.devnull), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
         metadata = json.loads(output.stdout)
         streams = metadata['streams']
 
-        # Find the subtitles stream with language metadata
+        # Find the subtitle stream with language metadata
         subtitle_languages = []
         for stream in streams:
-            if stream['codec_type'] == 'subtitles' and 'tags' in stream and 'language' in stream['tags']:
+            if stream['codec_type'] == 'subtitle' and 'tags' in stream and 'language' in stream['tags']:
                 language = stream['tags']['language']
                 subtitle_languages.append(language)
 
@@ -1784,18 +1878,26 @@ class MediaSubtitleEmbedder:
             else:
                 print(f"The given file does not exist: {media_filepath}")
                 raise Exception(f"Invalid file: {media_filepath}")
+
+        if not self.ffprobe_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("Cannot find ffprobe executable")
+            else:
+                print("Cannot find ffprobe executable")
+                raise Exception("Dependency not found: ffprobe")
+
         if not self.ffmpeg_check():
             if self.error_messages_callback:
-                self.error_messages_callback("Cannot find ffmpeg executable on this machine")
+                self.error_messages_callback("Cannot find ffmpeg executable")
             else:
-                print("Cannot find ffmpeg executable on this machine")
+                print("Cannot find ffmpeg executable")
                 raise Exception("Dependency not found: ffmpeg")
 
         try:
             existing_languages = self.get_existing_subtitle_language(media_filepath)
             if self.language in existing_languages:
                 # THIS 'print' THINGS WILL MAKE progresbar screwed up!
-                #msg = (f"'{self.language}' subtitles stream already existed in {media_filepath}")
+                #msg = (f"'{self.language}' subtitle stream already existed in {media_filepath}")
                 #if self.error_messages_callback:
                 #    self.error_messages_callback(msg)
                 #else:
@@ -1803,11 +1905,14 @@ class MediaSubtitleEmbedder:
                 return
 
             else:
-                # Determine the next available subtitles index
+                # Determine the next available subtitle index
                 next_index = len(existing_languages)
 
                 ffmpeg_command = [
                                     'ffmpeg',
+                                    '-hide_banner',
+                                    '-loglevel', 'error',
+                                    '-v', 'error',
                                     '-y',
                                     '-i', media_filepath,
                                     '-sub_charenc', 'UTF-8',
@@ -1822,31 +1927,33 @@ class MediaSubtitleEmbedder:
                                     self.output_path
                                  ]
 
-                info = f"Embedding subtitles file into {media_filepath}"
+                subtitle_file_display_name = os.path.basename(self.subtitle_path).split('/')[-1]
+                media_file_display_name = os.path.basename(media_filepath).split('/')[-1]
+                info = f"Embedding '{self.language}' subtitles file '{subtitle_file_display_name}' into '{media_file_display_name}'"
+                start_time = time.time()
 
-                '''
-                # USING ffmpeg_progress_yield MODULE
-                ff = FfmpegProgress(ffmpeg_command)
-                percentage = 0
-                for progress in ff.run_command_with_progress():
-                    percentage = progress
-                    if self.progress_callback:
-                        self.progress_callback(info, media_filepath, percentage)
-                '''
+                ffprobe_command = [
+                                    'ffprobe',
+                                    '-hide_banner',
+                                    '-v', 'error',
+                                    '-loglevel', 'error',
+                                    '-show_entries',
+                                    'format=duration',
+                                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                                    media_filepath
+                                  ]
 
-                # RUNNING ffmpeg_command WITHOUT ffmpeg_progress_yield MODULE
-                ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-
+                ffprobe_process = None
                 if sys.platform == "win32":
-                    ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                    ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 else:
-                    ffprobe_process = subprocess.Popen(ffprobe_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
 
-                total_duration = float(ffprobe_process.stdout.read().decode('utf-8').strip())
+                total_duration = float(ffprobe_process.strip())
 
-
+                process = None
                 if sys.platform == "win32":
-                    process = subprocess.Popen(ffmpeg_command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                    process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 else:
                     process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -1866,7 +1973,7 @@ class MediaSubtitleEmbedder:
                         if current_duration>0:
                             percentage = int(current_duration*100/(int(float(total_duration))*1000))
                             if self.progress_callback:
-                                self.progress_callback(info, media_filepath, percentage)
+                                self.progress_callback(info, media_file_display_name, percentage, start_time)
 
                 if os.path.isfile(self.output_path):
                     return self.output_path
@@ -1896,8 +2003,8 @@ class MediaSubtitleEmbedder:
 class MediaSubtitleRemover:
     @staticmethod
     def which(program):
-        def is_exe(media_filepath):
-            return os.path.isfile(media_filepath) and os.access(media_filepath, os.X_OK)
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
         fpath, _ = os.path.split(program)
         if fpath:
             if is_exe(program):
@@ -1908,6 +2015,14 @@ class MediaSubtitleRemover:
                 exe_file = os.path.join(path, program)
                 if is_exe(exe_file):
                     return exe_file
+        return None
+
+    @staticmethod
+    def ffprobe_check():
+        if MediaSubtitleRemover.which("ffprobe"):
+            return "ffprobe"
+        if MediaSubtitleRemover.which("ffprobe.exe"):
+            return "ffprobe.exe"
         return None
 
     @staticmethod
@@ -1936,48 +2051,61 @@ class MediaSubtitleRemover:
             else:
                 print(f"The given file does not exist: {media_filepath}")
                 raise Exception(f"Invalid file: {media_filepath}")
+
+        if not self.ffprobe_check():
+            if self.error_messages_callback:
+                self.error_messages_callback("Cannot find ffprobe executable")
+            else:
+                print("Cannot find ffprobe executable")
+                raise Exception("Dependency not found: ffprobe")
+
         if not self.ffmpeg_check():
             if self.error_messages_callback:
-                self.error_messages_callback("Cannot find ffmpeg executable on this machine")
+                self.error_messages_callback("Cannot find ffmpeg executable")
             else:
-                print("Cannot find ffmpeg executable on this machine")
+                print("Cannot find ffmpeg executable")
                 raise Exception("Dependency not found: ffmpeg")
 
         try:
             ffmpeg_command = [
                                 'ffmpeg',
+                                '-hide_banner',
+                                '-loglevel', 'error',
+                                '-v', 'error',
                                 '-y',
                                 '-i', media_filepath,
                                 '-c', 'copy',
                                 '-sn',
-                                "-progress", "-", "-nostats",
+                                '-progress', '-', '-nostats',
                                 self.output_path
                              ]
 
-            info = "Removing subtitles streams from file"
+            media_file_display_name = os.path.basename(media_filepath).split('/')[-1]
+            info = f"Removing subtitles streams from '{media_file_display_name}'"
+            start_time = time.time()
 
-            '''
-            # USING ffmpeg_progress_yield MODULE
-            ff = FfmpegProgress(ffmpeg_command)
-            percentage = 0
-            for progress in ff.run_command_with_progress():
-                percentage = progress
-                if self.progress_callback:
-                    self.progress_callback(info, media_filepath, percentage)
-            '''
+            ffprobe_command = [
+                                'ffprobe',
+                                '-hide_banner',
+                                '-v', 'error',
+                                '-loglevel', 'error',
+                                '-show_entries',
+                                'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1',
+                                media_filepath
+                              ]
 
-            # RUNNING ffmpeg_command WITHOUT ffmpeg_progress_yield MODULE
-            ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-
+            ffprobe_process = None
             if sys.platform == "win32":
-                ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                ffprobe_process = subprocess.Popen(ffprobe_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
 
-            total_duration = float(ffprobe_process.stdout.read().decode('utf-8').strip())
+            total_duration = float(ffprobe_process.strip())
 
+            process = None
             if sys.platform == "win32":
-                process = subprocess.Popen(ffmpeg_command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -1997,7 +2125,7 @@ class MediaSubtitleRemover:
                     if current_duration>0:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
                         if self.progress_callback:
-                            self.progress_callback(info, media_filepath, percentage)
+                            self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             if os.path.isfile(self.output_path):
                 return self.output_path
@@ -2169,14 +2297,65 @@ def is_same_language(src, dst, error_messages_callback=None):
         return
 
 
-def check_file_type(file_path, error_messages_callback=None):
-    try:
-        ffprobe_cmd = ['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-print_format', 'json', file_path]
-        output = None
-        if sys.platform == "win32":
-            output = subprocess.check_output(ffprobe_cmd, creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8')
+def check_file_type(media_filepath, error_messages_callback=None):
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
         else:
-            output = subprocess.check_output(ffprobe_cmd).decode('utf-8')
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    def ffprobe_check():
+        if which("ffprobe"):
+            return "ffprobe"
+        if which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
+    if "\\" in media_filepath:
+        media_filepath = media_filepath.replace("\\", "/")
+
+    if not os.path.isfile(media_filepath):
+        if error_messages_callback:
+           error_messages_callback(f"The given file does not exist: {media_filepath}")
+        else:
+            print(f"The given file does not exist: {media_filepath}")
+            raise Exception(f"Invalid file: {media_filepath}")
+    if not ffprobe_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffprobe executable")
+        else:
+            print("Cannot find ffprobe executable")
+            raise Exception("Dependency not found: ffprobe")
+
+    try:
+        ffprobe_cmd = [
+                        'ffprobe',
+                        '-hide_banner',
+                        '-loglevel', 'error',
+                        '-v', 'error',
+                        '-show_format',
+                        '-show_streams',
+                        '-print_format',
+                        'json',
+                        media_filepath
+                      ]
+
+        output = None
+
+        if sys.platform == "win32":
+            output = subprocess.check_output(ffprobe_cmd, stdin=open(os.devnull), stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8')
+        else:
+            output = subprocess.check_output(ffprobe_cmd, stdin=open(os.devnull), stderr=subprocess.PIPE).decode('utf-8')
+
         data = json.loads(output)
 
         if 'streams' in data:
@@ -2185,6 +2364,7 @@ def check_file_type(file_path, error_messages_callback=None):
                     return 'audio'
                 elif 'codec_type' in stream and stream['codec_type'] == 'video':
                     return 'video'
+
     except (subprocess.CalledProcessError, json.JSONDecodeError):
         pass
 
@@ -2197,54 +2377,135 @@ def check_file_type(file_path, error_messages_callback=None):
     return None
 
 
-def get_duration(filename, error_messages_callback=None):
-    try:
-        command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{filename}"'
-        result = subprocess.run(command, capture_output=True, text=True, shell=True)
-
-        if result.returncode == 0:
-            duration = float(result.stdout)
-            return duration
+def get_existing_subtitle_language(media_path):
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
         else:
-            msg = f"Failed to get duration for {filename}."
-            if error_messages_callback:
-                error_messages_callback(msg)
-            return None
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    def ffprobe_check():
+        if which("ffprobe"):
+            return "ffprobe"
+        if which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
+    if "\\" in media_filepath:
+        media_filepath = media_filepath.replace("\\", "/")
+
+    if not os.path.isfile(media_filepath):
+        if error_messages_callback:
+           error_messages_callback(f"The given file does not exist: {media_filepath}")
+        else:
+            print(f"The given file does not exist: {media_filepath}")
+            raise Exception(f"Invalid file: {media_filepath}")
+    if not ffprobe_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffprobe executable")
+        else:
+            print("Cannot find ffprobe executable")
+            raise Exception("Dependency not found: ffprobe")
+
+    try:
+        # Run ffprobe to get stream information
+        command = [
+                    'ffprobe',
+                    '-hide_banner',
+                    '-v', 'error',
+                    '-loglevel', 'error',
+                    '-of', 'json',
+                    '-show_entries',
+                    'format:stream',
+                    media_path
+                  ]
+
+        output = None
+        if sys.platform == "win32":
+            output = subprocess.run(command, stdin=open(os.devnull), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            output = subprocess.run(command, stdin=open(os.devnull), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+
+        metadata = json.loads(output.stdout)
+        streams = metadata['streams']
+
+        # Find the subtitles stream with language metadata
+        subtitle_languages = []
+        for stream in streams:
+            if stream['codec_type'] == 'subtitles' and 'tags' in stream and 'language' in stream['tags']:
+                language = stream['tags']['language']
+                subtitle_languages.append(language)
+
+        return subtitle_languages
 
     except Exception as e:
-        if error_messages_callback:
-            error_messages_callback(e)
+        if self.error_messages_callback:
+            self.error_messages_callback(e)
         else:
             print(e)
-        return
-
-
-def get_existing_subtitle_language(media_path):
-    # Run ffprobe to get stream information
-    command = [
-                'ffprobe',
-                '-v', 'quiet',
-                '-of', 'json',
-                '-show_entries',
-                'format:stream',
-                media_path
-    ]
-
-    output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
-    metadata = json.loads(output.stdout)
-    streams = metadata['streams']
-
-    # Find the subtitles stream with language metadata
-    subtitle_languages = []
-    for stream in streams:
-        if stream['codec_type'] == 'subtitles' and 'tags' in stream and 'language' in stream['tags']:
-            language = stream['tags']['language']
-            subtitle_languages.append(language)
-
-    return subtitle_languages
+        return None
 
 
 def render_subtitle_to_media(media_filepath, media_type, media_ext, subtitle_path, output_path, error_messages_callback=None):
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
+        else:
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    def ffprobe_check():
+        if which("ffprobe"):
+            return "ffprobe"
+        if which("ffprobe.exe"):
+            return "ffprobe.exe"
+        return None
+
+    def ffmpeg_check():
+        if which("ffmpeg"):
+            return "ffmpeg"
+        if which("ffmpeg.exe"):
+            return "ffmpeg.exe"
+        return None
+
+    if "\\" in media_filepath:
+        media_filepath = media_filepath.replace("\\", "/")
+
+    if not os.path.isfile(media_filepath):
+        if error_messages_callback:
+           error_messages_callback(f"The given file does not exist: {media_filepath}")
+        else:
+            print(f"The given file does not exist: {media_filepath}")
+            raise Exception(f"Invalid file: {media_filepath}")
+    if not ffprobe_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffprobe executable")
+        else:
+            print("Cannot find ffprobe executable")
+            raise Exception("Dependency not found: ffprobe")
+    if not ffmpeg_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffmpeg executable")
+        else:
+            print("Cannot find ffmpeg executable")
+            raise Exception("Dependency not found: ffmpeg")
 
     try:
         if "\\" in media_filepath:
@@ -2256,54 +2517,62 @@ def render_subtitle_to_media(media_filepath, media_type, media_ext, subtitle_pat
         if "\\" in output_path:
             output_path = output_path.replace("\\", "/")
 
-        ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-        ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        total_duration = float(ffprobe_process.stdout.read().decode().strip())
-
-        #ffmpeg_command = f'ffmpeg -y -i "{media_filepath}" -vf "subtitles={shlex.quote(subtitle_path)}" "{output_path}"'
-
-        '''
-        ffmpeg_command = [
-                            "ffmpeg",
-                            "-y",
-                            "-i", media_filepath,
-                            "-vf", f"subtitles={shlex.quote(self.subtitle_path)}",
-                            "-y", self.output_path
-                         ]
-        '''
-
         scale_switch = "'trunc(iw/2)*2':'trunc(ih/2)*2'"
         ffmpeg_command = [
-                            "ffmpeg",
-                            "-y",
-                            "-i", media_filepath,
-                            "-vf", f"subtitles={shlex.quote(self.subtitle_path)},scale={scale_switch}",
-                            "-c:v", "libx264",
-                            "-crf", "23",
-                            "-preset", "medium",
-                            "-c:a", "copy",
+                            'ffmpeg',
+                            '-y',
+                            '-i', media_filepath,
+                            '-vf', f'subtitles={shlex.quote(self.subtitle_path)},scale={scale_switch}',
+                            '-c:v', 'libx264',
+                            '-crf', '23',
+                            '-preset', 'medium',
+                            '-c:a', 'copy',
                             self.output_path
                          ]
 
-        widgets = [f"Rendering subtitles into {media_type} : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+        ffprobe_command = [
+                            'ffprobe',
+                            '-hide_banner',
+                            '-v', 'error',
+                            '-loglevel', 'error',
+                            '-show_entries',
+                            'format=duration',
+                            '-of', 'default=noprint_wrappers=1:nokey=1',
+                            media_filepath
+                          ]
+
+        ffprobe_process = None
+        if sys.platform == "win32":
+            ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
+
+        total_duration = float(ffprobe_process.strip())
+
+        widgets = [f"Rendering '{language_code}' subtitles into {media_type}    : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
         pbar = ProgressBar(widgets=widgets, maxval=100).start()
         percentage = 0
 
+        process = None
         if sys.platform == "win32":
-            process = subprocess.Popen(ffmpeg_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+            process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         else:
-            process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+            process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-        for line in process.stdout:
-            if "time=" in line:
-                #print(line)
-                time_str = line.split("time=")[1].split()[0]
-                #print(f"time_str = {time_str})
-                current_duration = sum(float(x) * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
-                #print(f"current_duration = {current_duration}")
+        while True:
+            if process.stdout is None:
+                continue
+
+            stderr_line = (process.stdout.readline().decode("utf-8", errors="replace").strip())
+ 
+            if stderr_line == '' and process.poll() is not None:
+                break
+
+            if "out_time=" in stderr_line:
+                time_str = stderr_line.split('time=')[1].split()[0]
+                current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
                 if current_duration>0:
-                    percentage = int(current_duration*100/total_duration)
-                    #print(f"percentage = {percentage}%")
+                    percentage = int(current_duration*100/(int(float(total_duration))*1000))
                     pbar.update(percentage)
         pbar.finish()
         return output_path
@@ -2313,10 +2582,48 @@ def render_subtitle_to_media(media_filepath, media_type, media_ext, subtitle_pat
             error_messages_callback(e)
         else:
             print(e)
-        return
+        return None
 
 
 def embed_subtitle_to_media(media_filepath, media_type, subtitle_path, language_code, output_path, error_messages_callback=None):
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
+        else:
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    def ffmpeg_check():
+        if which("ffmpeg"):
+            return "ffmpeg"
+        if which("ffmpeg.exe"):
+            return "ffmpeg.exe"
+        return None
+
+    if "\\" in media_filepath:
+        media_filepath = media_filepath.replace("\\", "/")
+
+    if not os.path.isfile(media_filepath):
+        if error_messages_callback:
+           error_messages_callback(f"The given file does not exist: {media_filepath}")
+        else:
+            print(f"The given file does not exist: {media_filepath}")
+            raise Exception(f"Invalid file: {media_filepath}")
+    if not ffmpeg_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffmpeg executable")
+        else:
+            print("Cannot find ffmpeg executable")
+            raise Exception("Dependency not found: ffmpeg")
+
     try:
         if "\\" in media_filepath:
             media_filepath = media_filepath.replace("\\", "/")
@@ -2336,16 +2643,11 @@ def embed_subtitle_to_media(media_filepath, media_type, subtitle_path, language_
             # Determine the next available subtitles index
             next_index = len(existing_languages)
 
-            ffprobe_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{media_filepath}"'
-            if sys.platform == "win32":
-                ffprobe_process = subprocess.Popen(ffprobe_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            else:
-                ffprobe_process = subprocess.Popen(ffprobe_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-            total_duration = float(ffprobe_process.stdout.read().decode('utf-8').strip())
-
             ffmpeg_command = [
                                 'ffmpeg',
+                                '-hide_banner',
+                                '-loglevel', 'error',
+                                '-v', 'error',
                                 '-y',
                                 '-i', media_filepath,
                                 '-sub_charenc', 'UTF-8',
@@ -2359,28 +2661,54 @@ def embed_subtitle_to_media(media_filepath, media_type, subtitle_path, language_
                                 output_path
                              ]
 
-            widgets = [f"Embeding \'{language_code}\' subtitles into {media_type}  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+            ffprobe_command = [
+                                'ffprobe',
+                                '-hide_banner',
+                                '-v', 'error',
+                                '-loglevel', 'error',
+                                '-show_entries',
+                                'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1',
+                                media_filepath
+                             ]
+
+            ffprobe_process = None
+            if sys.platform == "win32":
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
+
+            total_duration = float(ffprobe_process.strip())
+
+            widgets = [f"Embedding '{language_code}' subtitles into {media_type}    : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
             pbar = ProgressBar(widgets=widgets, maxval=100).start()
             percentage = 0
 
+            process = None
             if sys.platform == "win32":
-                process = subprocess.Popen(ffmpeg_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+                process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+                process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-            for line in process.stdout:
-                if "time=" in line:
-                    #print(line)
-                    time_str = line.split("time=")[1].split()[0]
-                    #print(f"time_str = {time_str}")
-                    current_duration = sum(float(x) * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
-                    #print(f"current_duration = {current_duration}")
+            while True:
+                if process.stdout is None:
+                    continue
+
+                stderr_line = (process.stdout.readline().decode("utf-8", errors="replace").strip())
+ 
+                if stderr_line == '' and process.poll() is not None:
+                    break
+
+                if "out_time=" in stderr_line:
+                    time_str = stderr_line.split('time=')[1].split()[0]
+                    current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
                     if current_duration>0:
-                        percentage = int(current_duration*100/total_duration)
-                        #print(f"percentage = {percentage}%")
+                        percentage = int(current_duration*100/(int(float(total_duration))*1000))
                         pbar.update(percentage)
             pbar.finish()
+
             return output_path
+
         return
 
     except Exception as e:
@@ -2391,7 +2719,129 @@ def embed_subtitle_to_media(media_filepath, media_type, subtitle_path, language_
         return None
 
 
-def show_progress(info, media_filepath, progress):
+def remove_subtitles_from_media(media_filepath, output_path, progress_callback=None, error_messages_callback=None):
+    def which(program):
+        def is_exe(file_path):
+            return os.path.isfile(file_path) and os.access(file_path, os.X_OK)
+        fpath, _ = os.path.split(program)
+        if fpath:
+            if is_exe(program):
+                return program
+        else:
+            for path in os.environ["PATH"].split(os.pathsep):
+                path = path.strip('"')
+                exe_file = os.path.join(path, program)
+                if is_exe(exe_file):
+                    return exe_file
+        return None
+
+    def ffmpeg_check():
+        if which("ffmpeg"):
+            return "ffmpeg"
+        if which("ffmpeg.exe"):
+            return "ffmpeg.exe"
+        return None
+
+    if "\\" in media_filepath:
+        media_filepath = media_filepath.replace("\\", "/")
+
+    if not os.path.isfile(media_filepath):
+        if error_messages_callback:
+           error_messages_callback(f"The given file does not exist: {media_filepath}")
+        else:
+            print(f"The given file does not exist: {media_filepath}")
+            raise Exception(f"Invalid file: {media_filepath}")
+    if not ffmpeg_check():
+        if error_messages_callback:
+            error_messages_callback("Cannot find ffmpeg executable")
+        else:
+            print("Cannot find ffmpeg executable")
+            raise Exception("Dependency not found: ffmpeg")
+
+    try:
+        if "\\" in media_filepath:
+            media_filepath = media_filepath.replace("\\", "/")
+
+        if "\\" in output_path:
+            output_path = output_path.replace("\\", "/")
+
+        ffmpeg_command = [
+                            'ffmpeg',
+                            '-hide_banner',
+                            '-loglevel', 'error',
+                            '-v', 'error',
+                            '-y',
+                            '-i', media_filepath,
+                            '-c', 'copy',
+                            '-sn',
+                            '-progress', '-', '-nostats',
+                            self.output_path
+                         ]
+
+        ffprobe_command = [
+                            'ffprobe',
+                            '-hide_banner',
+                            '-v', 'error',
+                            '-loglevel', 'error',
+                            '-show_entries',
+                            'format=duration',
+                            '-of', 'default=noprint_wrappers=1:nokey=1',
+                            media_filepath
+                          ]
+
+        ffprobe_process = None
+        if sys.platform == "win32":
+            ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            ffprobe_process = subprocess.check_output(ffprobe_command, stdin=open(os.devnull), universal_newlines=True)
+
+        total_duration = float(ffprobe_process.strip())
+
+        widgets = ["Removing subtitles streams from file    : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
+        pbar = ProgressBar(widgets=widgets, maxval=100).start()
+        percentage = 0
+
+        process = None
+        if sys.platform == "win32":
+            process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            process = subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        while True:
+            if process.stdout is None:
+                continue
+
+            stderr_line = (process.stdout.readline().decode("utf-8", errors="replace").strip())
+ 
+            if stderr_line == '' and process.poll() is not None:
+                break
+
+            if "out_time=" in stderr_line:
+                time_str = stderr_line.split('time=')[1].split()[0]
+                current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
+                if current_duration>0:
+                    percentage = int(current_duration*100/(int(float(total_duration))*1000))
+                    pbar.update(percentage)
+        pbar.finish()
+
+        return output_path
+
+    except KeyboardInterrupt:
+        if error_messages_callback:
+            error_messages_callback("Cancelling all tasks")
+        else:
+            print("Cancelling all tasks")
+        return
+
+    except Exception as e:
+        if error_messages_callback:
+            error_messages_callback(e)
+        else:
+            print(e)
+        return None
+
+
+def show_progress(info, media_file_display_name, progress, start_time):
     global pbar
     pbar.update(progress)
 
@@ -2688,7 +3138,7 @@ def main():
                                 subtitle_stream_transcripts.append(entry[1])
 
                             base, ext = os.path.splitext(media_filepath)
-                            src_subtitle_filepath = "{base}.{src}.{format}".format(base=base, src=src_language, format=subtitle_format)
+                            src_subtitle_filepath = f"{base}.{src_language}.{subtitle_format}"
 
                             print(f"Extracting '{ffmpeg_src_language_code}' subtitles stream as       : '{src_subtitle_filepath}'")
 
@@ -2802,7 +3252,7 @@ def main():
                                 subtitle_stream_transcripts.append(entry[1])
 
                             base, ext = os.path.splitext(media_filepath)
-                            src_subtitle_filepath = "{base}.{src}.{format}".format(base=base, src=src_language, format=subtitle_format)
+                            src_subtitle_filepath = f"{base}.{src_language}.{subtitle_format}"
 
                             print(f"Extracting '{ffmpeg_src_language_code}' subtitles stream as       : '{src_subtitle_filepath}'")
 
@@ -2822,7 +3272,7 @@ def main():
                                 subtitle_stream_regions.append(entry[0])
                                 subtitle_stream_transcripts.append(entry[1])
                             base, ext = os.path.splitext(media_filepath)
-                            dst_subtitle_filepath = "{base}.{dst}.{format}".format(base=base, dst=dst_language, format=subtitle_format)
+                            dst_subtitle_filepath = f"{base}.{dst_language}.{subtitle_format}"
                             writer = SubtitleWriter(subtitle_stream_regions, subtitle_stream_transcripts, subtitle_format, error_messages_callback=show_error_messages)
                             print(f"Extracting '{ffmpeg_dst_language_code}' subtitles stream as       : '{dst_subtitle_filepath}'")
                             writer.write(dst_subtitle_filepath)
@@ -2850,7 +3300,7 @@ def main():
                                 pbar.finish()
 
                                 base, ext = os.path.splitext(media_filepath)
-                                src_subtitle_filepath = "{base}.{src}.{format}".format(base=base, src=src_language, format=subtitle_format)
+                                src_subtitle_filepath = f"{base}.{src_language}.{subtitle_format}"
 
                                 translation_writer = SubtitleWriter(subtitle_stream_regions, translated_subtitle_stream_transcripts, subtitle_format, error_messages_callback=show_error_messages)
                                 translation_writer.write(src_subtitle_filepath)
@@ -2864,8 +3314,8 @@ def main():
                                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
                                     base, ext = os.path.splitext(media_filepath)
-                                    src_tmp_embedded_media_filepath = "{base}.{src}.tmp.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
-                                    embedded_media_filepath = "{base}.{src}.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
+                                    src_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.tmp.embedded.{ext[1:]}"
+                                    embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.embedded.{ext[1:]}"
 
                                     widgets = [f"Embedding '{ffmpeg_src_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
@@ -2903,7 +3353,7 @@ def main():
                                 pbar.finish()
 
                                 base, ext = os.path.splitext(media_filepath)
-                                dst_subtitle_filepath = "{base}.{dst}.{format}".format(base=base, dst=dst_language, format=subtitle_format)
+                                dst_subtitle_filepath = f"{base}.{dst_language}.{subtitle_format}"
 
                                 translation_writer = SubtitleWriter(subtitle_stream_regions, translated_subtitle_stream_transcripts, subtitle_format, error_messages_callback=show_error_messages)
                                 translation_writer.write(dst_subtitle_filepath)
@@ -2917,8 +3367,8 @@ def main():
                                     ffmpeg_dst_language_code = google_language.ffmpeg_code_of_code[dst_language]
 
                                     base, ext = os.path.splitext(media_filepath)
-                                    dst_tmp_embedded_media_filepath = "{base}.{dst}.tmp.embedded.{format}".format(base=base, dst=ffmpeg_dst_language_code, format=ext[1:])
-                                    embedded_media_filepath = "{base}.{dst}.embedded.{format}".format(base=base, dst=ffmpeg_dst_language_code, format=ext[1:])
+                                    dst_tmp_embedded_media_filepath = f"{base}.{ffmpeg_dst_language_code}.tmp.embedded.{ext[1:]}"
+                                    embedded_media_filepath = f"{base}.{ffmpeg_dst_language_code}.embedded.{ext[1:]}"
 
                                     widgets = [f"Embedding '{ffmpeg_dst_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
@@ -2980,8 +3430,8 @@ def main():
     if args.force_recognize == True:
         for media_filepath in media_filepaths:
             base, ext = os.path.splitext(media_filepath)
-            tmp_subtitle_removed_media_filepath = "{base}.tmp.subtitles.removed.media_filepath.{format}".format(base=base, format=ext[1:])
-            subtitle_removed_media_filepath = "{base}.force.recognize.{format}".format(base=base, format=ext[1:])
+            tmp_subtitle_removed_media_filepath = f"{base}.tmp.subtitles.removed.media_filepath.{ext[1:]}"
+            subtitle_removed_media_filepath = f"{base}.force.recognize.{ext[1:]}"
 
             #src_tmp_output = remove_subtitles_from_media(media_filepath, tmp_subtitle_removed_media_filepath, progress_callback=show_progress, error_messages_callback=show_error_messages)
 
@@ -3046,7 +3496,7 @@ def main():
             timed_subtitles = [(r, t) for r, t in zip(regions, transcripts) if t]
 
             base, ext = os.path.splitext(media_filepath)
-            src_subtitle_filepath = "{base}.{src}.{format}".format(base=base, src=src_language, format=subtitle_format)
+            src_subtitle_filepath = f"{base}.{src_language}.{subtitle_format}"
 
             writer = SubtitleWriter(regions, transcripts, subtitle_format, error_messages_callback=show_error_messages)
             writer.write(src_subtitle_filepath)
@@ -3072,7 +3522,7 @@ def main():
                 pbar.finish()
 
                 base, ext = os.path.splitext(media_filepath)
-                dst_subtitle_filepath = "{base}.{dst}.{format}".format(base=base, dst=args.dst_language, format=subtitle_format)
+                dst_subtitle_filepath = f"{base}.{dst_language}.{subtitle_format}"
 
                 translation_writer = SubtitleWriter(created_regions, translated_subtitles, subtitle_format, error_messages_callback=show_error_messages)
                 translation_writer.write(dst_subtitle_filepath)
@@ -3095,8 +3545,8 @@ def main():
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
                     base, ext = os.path.splitext(media_filepath)
-                    src_tmp_embedded_media_filepath = "{base}.{src}.tmp.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
-                    embedded_media_filepath = "{base}.{src}.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
+                    src_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.tmp.embedded.{ext[1:]}"
+                    embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.embedded.{ext[1:]}"
 
                     widgets = [f"Embedding '{ffmpeg_src_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
@@ -3115,11 +3565,13 @@ def main():
 
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
                     ffmpeg_dst_language_code = google_language.ffmpeg_code_of_code[dst_language]
+                    print(f"ffmpeg_src_language_code = {ffmpeg_src_language_code}")
+                    print(f"ffmpeg_dst_language_code = {ffmpeg_dst_language_code}")
 
                     base, ext = os.path.splitext(media_filepath)
-                    src_tmp_embedded_media_filepath = "{base}.{src}.tmp.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
-                    src_dst_tmp_embedded_media_filepath = "{base}.{src}.{dst}.tmp.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, dst=ffmpeg_dst_language_code, format=ext[1:])
-                    embedded_media_filepath = "{base}.{src}.{dst}.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, dst=ffmpeg_dst_language_code, format=ext[1:])
+                    src_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.tmp.embedded.{ext[1:]}"
+                    src_dst_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.{ffmpeg_dst_language_code}.tmp.embedded.{ext[1:]}"
+                    embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.{ffmpeg_dst_language_code}.embedded.{ext[1:]}"
 
                     widgets = [f"Embedding '{ffmpeg_src_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
@@ -3131,14 +3583,14 @@ def main():
                         widgets = [f"Embedding '{ffmpeg_dst_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                         pbar = ProgressBar(widgets=widgets, maxval=100).start()
                         subtitle_embedder = MediaSubtitleEmbedder(subtitle_path=dst_subtitle_filepath, language=ffmpeg_dst_language_code, output_path=src_dst_tmp_embedded_media_filepath, progress_callback=show_progress, error_messages_callback=show_error_messages)
-                        src_dst_tmp_output = subtitle_embedder(src_tmp_embedded_media_filepath)
+                        src_dst_tmp_output = subtitle_embedder(src_tmp_output)
                         pbar.finish()
-                    else:
-                        print("Unknown error!")
 
                     if os.path.isfile(src_dst_tmp_output):
                         shutil.copy(src_dst_tmp_output, embedded_media_filepath)
                         print(f"Subtitles embedded {media_type} file saved as     : '{embedded_media_filepath}'")
+                    else:
+                        print("Unknown error!")
 
                     if os.path.isfile(src_dst_tmp_output):
                         os.remove(src_dst_tmp_output)
@@ -3146,13 +3598,14 @@ def main():
                     if os.path.isfile(src_tmp_output):
                         os.remove(src_tmp_output)
 
+
                 elif args.embed_src == True and args.embed_dst == False:
 
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
                     base, ext = os.path.splitext(media_filepath)
-                    src_tmp_embedded_media_filepath = "{base}.{src}.tmp.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
-                    embedded_media_filepath = "{base}.{src}.embedded.{format}".format(base=base, src=ffmpeg_src_language_code, format=ext[1:])
+                    src_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.tmp.embedded.{ext[1:]}"
+                    embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.embedded.{ext[1:]}"
 
                     widgets = [f"Embedding '{ffmpeg_src_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
@@ -3172,8 +3625,8 @@ def main():
                     ffmpeg_dst_language_code = google_language.ffmpeg_code_of_code[dst_language]
 
                     base, ext = os.path.splitext(media_filepath)
-                    dst_tmp_embedded_media_filepath = "{base}.{dst}.tmp.embedded.{format}".format(base=base, dst=ffmpeg_dst_language_code, format=ext[1:])
-                    embedded_media_filepath = "{base}.{dst}.embedded.{format}".format(base=base, dst=ffmpeg_dst_language_code, format=ext[1:])
+                    dst_tmp_embedded_media_filepath = f"{base}.{ffmpeg_dst_language_code}.tmp.embedded.{ext[1:]}"
+                    embedded_media_filepath = f"{base}.{ffmpeg_dst_language_code}.embedded.{ext[1:]}"
 
                     widgets = [f"Embedding '{ffmpeg_dst_language_code}' subtitles into {media_type} file  : ", Percentage(), ' ', Bar(marker="#"), ' ', ETA()]
                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
