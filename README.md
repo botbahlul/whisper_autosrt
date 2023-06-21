@@ -97,7 +97,8 @@ whisper_autosrt -S auto "Episode 1.mp4"
 
 ```
 usage: whisper_autosrt [-h] [-m MODEL_NAME] [-lm] [-d DEVICE] [-ld] [-ct COMPUTE_TYPE] [-lct] [-t CPU_THREADS] [-nw NUM_WORKERS]
-                       [-S SRC_LANGUAGE] [-D DST_LANGUAGE] [-lS] [-lD] [-F FORMAT] [-lF] [-c CONCURRENCY] [-r RENDER] [-v]
+                       [-S SRC_LANGUAGE] [-D DST_LANGUAGE] [-lS] [-lD] [-F FORMAT] [-lF] [-c CONCURRENCY] [-es EMBED_SRC]
+                       [-ed EMBED_DST] [-fr FORCE_RECOGNIZE] [-v]
                        [source_path ...]
 
 positional arguments:
@@ -129,12 +130,16 @@ options:
   -lD, --list-dst-languages
                         List all available dst_languages (google translate supported languages)
   -F FORMAT, --format FORMAT
-                        Desired subtitle format
-  -lF, --list-formats   List all supported subtitle formats
+                        Desired subtitles format
+  -lF, --list-formats   List all supported subtitles formats
   -c CONCURRENCY, --concurrency CONCURRENCY
                         Number of concurrent calls for Google Translate API
-  -r RENDER, --render RENDER
-                        Boolean value (True or False) for render subtitle file into video file
+  -es EMBED_SRC, --embed-src EMBED_SRC
+                        Boolean value (True or False) for embedding original language subtitles file into video file
+  -ed EMBED_DST, --embed-dst EMBED_DST
+                        Boolean value (True or False) for embedding translated subtitles file into video file
+  -fr FORCE_RECOGNIZE, --force-recognize FORCE_RECOGNIZE
+                        Boolean value (True or False) for re-recognize media file event if it's already has subtitles stream
   -v, --version         show program's version number and exit
 ```
 
