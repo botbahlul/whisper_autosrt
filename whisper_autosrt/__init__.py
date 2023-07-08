@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 #marker='█'
 
 
@@ -628,7 +628,7 @@ class GoogleLanguage:
         self.list_names.append("Yoruba")
         self.list_names.append("Zulu")
 
-        # NOTE THAT Google Translate AND Whisper Speech Recognition API USE ISO-639-1 STANDARD CODE ('al', 'af', 'as', ETC)
+        # NOTE THAT Google Translate AND Vosk Speech Recognition API USE ISO-639-1 STANDARD CODE ('al', 'af', 'as', ETC)
         # WHEN ffmpeg SUBTITLES STREAMS USE ISO 639-2 STANDARD CODE ('afr', 'alb', 'amh', ETC)
 
         self.list_ffmpeg_codes = []
@@ -767,11 +767,13 @@ class GoogleLanguage:
         self.list_ffmpeg_codes.append("zul")  # Zulu
 
         self.code_of_name = dict(zip(self.list_names, self.list_codes))
+        self.code_of_ffmpeg_code = dict(zip(self.list_ffmpeg_codes, self.list_codes))
+
         self.name_of_code = dict(zip(self.list_codes, self.list_names))
+        self.name_of_ffmpeg_code = dict(zip(self.list_ffmpeg_codes, self.list_names))
 
         self.ffmpeg_code_of_name = dict(zip(self.list_names, self.list_ffmpeg_codes))
         self.ffmpeg_code_of_code = dict(zip(self.list_codes, self.list_ffmpeg_codes))
-        self.name_of_ffmpeg_code = dict(zip(self.list_ffmpeg_codes, self.list_names))
 
         self.dict = {
                         'af': 'Afrikaans',
@@ -1045,13 +1047,22 @@ class GoogleLanguage:
                                 'zu': 'zul', # Zulu
                            }
 
-    def get_name(self, code):
+    def get_code_of_name(self, name):
+        return self.code_of_name[name]
+
+    def get_code_of_ffmpeg_code(self, ffmpeg_code):
+        return self.code_of_ffmpeg_code[ffmpeg_code]
+
+    def get_name_of_code(self, code):
         return self.name_of_code[code]
 
-    def get_code(self, language):
-        return self.code_of_name[language]
+    def get_name_of_ffmpeg_code(self, ffmpeg_code):
+        return self.name_of_ffmpeg_code[ffmpeg_code]
 
-    def get_ffmpeg_code(self, code):
+    def get_ffmpeg_code_of_name(self, name):
+        return self.ffmpeg_code_of_name[name]
+
+    def get_ffmpeg_code_of_code(self, code):
         return self.ffmpeg_code_of_code[code]
 
 
@@ -1091,7 +1102,7 @@ class WavConverter:
             return "ffmpeg.exe"
         return None
 
-    def __init__(self, channels=1, rate=48000, progress_callback=None, error_messages_callback=None):
+    def __init__(self, channels=1, rate=16000, progress_callback=None, error_messages_callback=None):
         self.channels = channels
         self.rate = rate
         self.progress_callback = progress_callback
@@ -1180,9 +1191,9 @@ class WavConverter:
                     time_str = stderr_line.split('time=')[1].split()[0]
                     current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
 
-                    if current_duration>0:
+                    if current_duration>0 and current_duration<=total_duration*1000:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                        if self.progress_callback:
+                        if self.progress_callback and percentage <= 100:
                             self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             temp.close()
@@ -1763,9 +1774,9 @@ class MediaSubtitleRenderer:
                     time_str = stderr_line.split('time=')[1].split()[0]
                     current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
 
-                    if current_duration>0:
+                    if current_duration>0 and current_duration<=total_duration*1000:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                        if self.progress_callback:
+                        if self.progress_callback and percentage <= 100:
                             self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             if os.path.isfile(self.output_path):
@@ -1970,9 +1981,9 @@ class MediaSubtitleEmbedder:
                         time_str = stderr_line.split('time=')[1].split()[0]
                         current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
 
-                        if current_duration>0:
+                        if current_duration>0 and current_duration<=total_duration*1000:
                             percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                            if self.progress_callback:
+                            if self.progress_callback and percentage <= 100:
                                 self.progress_callback(info, media_file_display_name, percentage, start_time)
 
                 if os.path.isfile(self.output_path):
@@ -2122,9 +2133,9 @@ class MediaSubtitleRemover:
                     time_str = stderr_line.split('time=')[1].split()[0]
                     current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
 
-                    if current_duration>0:
+                    if current_duration>0 and current_duration<=total_duration*1000:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                        if self.progress_callback:
+                        if self.progress_callback and percentage <= 100:
                             self.progress_callback(info, media_file_display_name, percentage, start_time)
 
             if os.path.isfile(self.output_path):
@@ -2571,9 +2582,13 @@ def render_subtitle_to_media(media_filepath, media_type, media_ext, subtitle_pat
             if "out_time=" in stderr_line:
                 time_str = stderr_line.split('time=')[1].split()[0]
                 current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
-                if current_duration>0:
+
+                if current_duration>0 and current_duration<=total_duration*1000:
                     percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                    pbar.update(percentage)
+                    if percentage <= 100:
+                        pbar.update(percentage)
+
+
         pbar.finish()
         return output_path
 
@@ -2702,9 +2717,11 @@ def embed_subtitle_to_media(media_filepath, media_type, subtitle_path, language_
                 if "out_time=" in stderr_line:
                     time_str = stderr_line.split('time=')[1].split()[0]
                     current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
-                    if current_duration>0:
+
+                    if current_duration>0 and current_duration<=total_duration*1000:
                         percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                        pbar.update(percentage)
+                        if percentage <= 100:
+                            pbar.update(percentage)
             pbar.finish()
 
             return output_path
@@ -2819,9 +2836,10 @@ def remove_subtitles_from_media(media_filepath, output_path, progress_callback=N
             if "out_time=" in stderr_line:
                 time_str = stderr_line.split('time=')[1].split()[0]
                 current_duration = sum(float(x) * 1000 * 60 ** i for i, x in enumerate(reversed(time_str.split(":"))))
-                if current_duration>0:
+                if current_duration>0 and current_duration<=total_duration*1000:
                     percentage = int(current_duration*100/(int(float(total_duration))*1000))
-                    pbar.update(percentage)
+                    if percentage <= 100:
+                        pbar.update(percentage)
         pbar.finish()
 
         return output_path
@@ -3565,8 +3583,6 @@ def main():
 
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
                     ffmpeg_dst_language_code = google_language.ffmpeg_code_of_code[dst_language]
-                    print(f"ffmpeg_src_language_code = {ffmpeg_src_language_code}")
-                    print(f"ffmpeg_dst_language_code = {ffmpeg_dst_language_code}")
 
                     base, ext = os.path.splitext(media_filepath)
                     src_tmp_embedded_media_filepath = f"{base}.{ffmpeg_src_language_code}.tmp.embedded.{ext[1:]}"
