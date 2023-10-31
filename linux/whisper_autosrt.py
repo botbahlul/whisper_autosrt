@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.1.10"
+VERSION = "0.1.11"
 #marker='█'
 
 
@@ -1210,6 +1210,68 @@ class WavConverter:
         except Exception as e:
             if self.error_messages_callback:
                 self.error_messages_callback(e)
+            else:
+                print(e)
+            return
+
+
+class SpeechRegionFinder:
+    def percentile(self, arr, percent):
+        arr = sorted(arr)
+        k = (len(arr) - 1) * percent
+        f = math.floor(k)
+        c = math.ceil(k)
+        if f == c: return arr[int(k)]
+        d0 = arr[int(f)] * (c - k)
+        d1 = arr[int(c)] * (k - f)
+        return d0 + d1
+
+    #def __init__(self, frame_width=4096, min_region_size=0.5, max_region_size=6):
+    def __init__(self, frame_width=4096, min_region_size=0.5, max_region_size=6, error_messages_callback=None):
+        self.frame_width = frame_width
+        self.min_region_size = min_region_size
+        self.max_region_size = max_region_size
+        self.error_messages_callback = error_messages_callback
+
+    def __call__(self, wav_filepath):
+        try:
+            reader = wave.open(wav_filepath)
+            sample_width = reader.getsampwidth()
+            rate = reader.getframerate()
+            n_channels = reader.getnchannels()
+            total_duration = reader.getnframes() / rate
+            chunk_duration = float(self.frame_width) / rate
+            n_chunks = int(total_duration / chunk_duration)
+            energies = []
+            for i in range(n_chunks):
+                chunk = reader.readframes(self.frame_width)
+                energies.append(audioop.rms(chunk, sample_width * n_channels))
+            threshold = self.percentile(energies, 0.2)
+            elapsed_time = 0
+            regions = []
+            region_start = None
+            for energy in energies:
+                is_silence = energy <= threshold
+                max_exceeded = region_start and elapsed_time - region_start >= self.max_region_size
+                if (max_exceeded or is_silence) and region_start:
+                    if elapsed_time - region_start >= self.min_region_size:
+                        regions.append((region_start, elapsed_time))
+                        region_start = None
+                elif (not region_start) and (not is_silence):
+                    region_start = elapsed_time
+                elapsed_time += chunk_duration
+            return regions
+
+        except KeyboardInterrupt:
+            if self.error_messages_callback:
+                self.error_messages_callback("Cancelling all tasks")
+            else:
+                print("Cancelling all tasks")
+            return
+
+        except Exception as e:
+            if self.error_messages_callback:
+                self.error_messages_callback(f"SpeechRegionFinder: {e}")
             else:
                 print(e)
             return
@@ -3168,7 +3230,7 @@ def main():
 
                 media_type = check_file_type(media_filepath, error_messages_callback=show_error_messages)
                 if media_type == "audio":
-                    print("Audio file won't has subtitles streams, skip checking")
+                    print("Audio file won't has subtitles streams, skip checking\n")
                     continue
 
                 if args.src_language == "auto":
@@ -3179,9 +3241,16 @@ def main():
                         wav_filepath, sample_rate = wav_converter(media_filepath)
                         pbar.finish()
 
-                        segments, info = model.transcribe(wav_filepath)
-                        src_language = info.language
-                        print(f"Detected language                       : {info.language} (probability = {info.language_probability})")
+                        region_finder = SpeechRegionFinder(frame_width=4096, min_region_size=0.5, max_region_size=6, error_messages_callback=show_error_messages)
+                        regions = region_finder(wav_filepath)
+
+                        if regions:
+                            segments, info = model.transcribe(wav_filepath)
+                            src_language = info.language
+                            print(f"Detected language                       : {info.language} (probability = {info.language_probability})")
+                        else:
+                            print("No speech regions found")
+                            sys.exit(1)
 
                     except KeyboardInterrupt:
                         pbar.finish()
@@ -3222,6 +3291,14 @@ def main():
                     print(f"Removing '{media_filepath}' from speech recognition process list")
                     removed_media_filepaths.append(media_filepath)
 
+                    #print("removed_media_filepaths = ", removed_media_filepaths)
+                    #print("media_filepaths = ", media_filepaths)
+                    #print("processed_list = ", processed_list)
+                    #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                    #print("len(media_filepaths) = ", len(media_filepaths))
+                    #print("len(processed_list) = ", len(processed_list))
+                    #print("")
+
                 else:
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
@@ -3259,6 +3336,14 @@ def main():
                                 print(f"Removing '{media_filepath}' from speech recognition process list")
                                 removed_media_filepaths.append(media_filepath)
 
+                                #print("removed_media_filepaths = ", removed_media_filepaths)
+                                #print("media_filepaths = ", media_filepaths)
+                                #print("processed_list = ", processed_list)
+                                #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                                #print("len(media_filepaths) = ", len(media_filepaths))
+                                #print("len(processed_list) = ", len(processed_list))
+                                #print("")
+
                             if os.path.isfile(src_subtitle_filepath):
                                 completed_tasks += 1
                                 #print(f"args.force_recognize == False, do_translate == False, media_type == 'video', subtitle stream = exist : completed_tasks = {completed_tasks}")
@@ -3268,13 +3353,21 @@ def main():
 
                 print("")
 
+            #print("removed_media_filepaths = ", removed_media_filepaths)
+            #print("media_filepaths = ", media_filepaths)
+            #print("processed_list = ", processed_list)
+            #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+            #print("len(media_filepaths) = ", len(media_filepaths))
+            #print("len(processed_list) = ", len(processed_list))
+            #print("")
+
             if not media_filepaths:
                 transcribe_end_time = time.time()
                 transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
                 transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
                 transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
                 hour, minute, second = transcribe_elapsed_time_str.split(":")
-                msg = "Total running time                       : %s:%s:%s" %(hour.zfill(2), minute, second)
+                msg = "Total running time                      : %s:%s:%s" %(hour.zfill(2), minute, second)
                 print(msg)
                 sys.exit(0)
 
@@ -3287,7 +3380,7 @@ def main():
 
                 media_type = check_file_type(media_filepath, error_messages_callback=show_error_messages)
                 if media_type == "audio":
-                    print("Audio file won't has subtitles streams, skip checking")
+                    print("Audio file won't has subtitles streams, skip checking\n")
                     continue
 
                 if args.src_language == "auto":
@@ -3298,9 +3391,17 @@ def main():
                         wav_filepath, sample_rate = wav_converter(media_filepath)
                         pbar.finish()
 
-                        segments, info = model.transcribe(wav_filepath)
-                        src_language = info.language
-                        print(f"Detected language                       : {info.language} (probability = {info.language_probability})")
+                        region_finder = SpeechRegionFinder(frame_width=4096, min_region_size=0.5, max_region_size=6, error_messages_callback=show_error_messages)
+                        regions = region_finder(wav_filepath)
+
+                        if regions:
+                            segments, info = model.transcribe(wav_filepath)
+                            src_language = info.language
+                            print(f"Detected language                       : {info.language} (probability = {info.language_probability})")
+                        else:
+                            print("No speech regions found")
+                            sys.exit(1)
+
 
                     except KeyboardInterrupt:
                         pbar.finish()
@@ -3340,6 +3441,14 @@ def main():
                     print(f"Language '{src_language}' is not supported by Google Translate API")
                     print(f"Removing '{media_filepath}' from speech recognition process list")
                     removed_media_filepaths.append(media_filepath)
+
+                    #print("removed_media_filepaths = ", removed_media_filepaths)
+                    #print("media_filepaths = ", media_filepaths)
+                    #print("processed_list = ", processed_list)
+                    #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                    #print("len(media_filepaths) = ", len(media_filepaths))
+                    #print("len(processed_list) = ", len(processed_list))
+                    #print("")
 
                 else:
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
@@ -3424,6 +3533,14 @@ def main():
                                     print(f"Removing '{media_filepath}' from speech recognition process list")
                                     removed_media_filepaths.append(media_filepath)
 
+                                    #print("removed_media_filepaths = ", removed_media_filepaths)
+                                    #print("media_filepaths = ", media_filepaths)
+                                    #print("processed_list = ", processed_list)
+                                    #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                                    #print("len(media_filepaths) = ", len(media_filepaths))
+                                    #print("len(processed_list) = ", len(processed_list))
+                                    #print("")
+
                                 if args.embed_src and dst_subtitle_stream_timed_subtitles and dst_subtitle_stream_timed_subtitles != []:
                                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
@@ -3478,11 +3595,19 @@ def main():
                                 translation_writer = SubtitleWriter(subtitle_stream_regions, translated_subtitle_stream_transcripts, subtitle_format, error_messages_callback=show_error_messages)
                                 translation_writer.write(dst_subtitle_filepath)
 
-                                print(f"Translated subtitles file saved as         : '{dst_subtitle_filepath}'")
+                                print(f"Translated subtitles file saved as      : '{dst_subtitle_filepath}'")
 
                                 if args.force_recognize == False:
                                     print(f"Removing '{media_filepath}' from speech recognition process list")
                                     removed_media_filepaths.append(media_filepath)
+
+                                    #print("removed_media_filepaths = ", removed_media_filepaths)
+                                    #print("media_filepaths = ", media_filepaths)
+                                    #print("processed_list = ", processed_list)
+                                    #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                                    #print("len(media_filepaths) = ", len(media_filepaths))
+                                    #print("len(processed_list) = ", len(processed_list))
+                                    #print("")
 
                                 if args.embed_dst == True and src_subtitle_stream_timed_subtitles and src_subtitle_stream_timed_subtitles != []:
                                     ffmpeg_dst_language_code = google_language.ffmpeg_code_of_code[dst_language]
@@ -3524,6 +3649,14 @@ def main():
                                 print(f"Removing '{media_filepath}' from speech recognition process list")
                                 removed_media_filepaths.append(media_filepath)
 
+                                #print("removed_media_filepaths = ", removed_media_filepaths)
+                                #print("media_filepaths = ", media_filepaths)
+                                #print("processed_list = ", processed_list)
+                                #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                                #print("len(media_filepaths) = ", len(media_filepaths))
+                                #print("len(processed_list) = ", len(processed_list))
+                                #print("")
+
                             # no need to translate becouse both languages subtitles files already saved
 
                             # if args.embed_src is True we can't embed it because dst subtitles stream already exist
@@ -3542,13 +3675,21 @@ def main():
                 print("")
             print("")
 
+            #print("removed_media_filepaths = ", removed_media_filepaths)
+            #print("media_filepaths = ", media_filepaths)
+            #print("processed_list = ", processed_list)
+            #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+            #print("len(media_filepaths) = ", len(media_filepaths))
+            #print("len(processed_list) = ", len(processed_list))
+            #print("")
+
             if not media_filepaths:
                 transcribe_end_time = time.time()
                 transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
                 transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
                 transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
                 hour, minute, second = transcribe_elapsed_time_str.split(":")
-                msg = "Total running time                       : %s:%s:%s" %(hour.zfill(2), minute, second)
+                msg = "Total running time                      : %s:%s:%s" %(hour.zfill(2), minute, second)
                 print(msg)
                 sys.exit(0)
 
@@ -3602,8 +3743,16 @@ def main():
 
                 else:
                     print("Nothing to remove")
-                    if media_filepath not in processed_list and media_filepath not in removed_media_filepaths:
+                    if (media_filepath not in processed_list) and (media_filepath not in removed_media_filepaths):
                         processed_list.append(media_filepath)
+
+                        #print("removed_media_filepaths = ", removed_media_filepaths)
+                        #print("media_filepaths = ", media_filepaths)
+                        #print("processed_list = ", processed_list)
+                        #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                        #print("len(media_filepaths) = ", len(media_filepaths))
+                        #print("len(processed_list) = ", len(processed_list))
+                        #print("")
 
             else:
                 if media_type == "video":
@@ -3614,6 +3763,13 @@ def main():
 
                 if media_filepath not in processed_list and media_filepath not in removed_media_filepaths:
                     processed_list.append(media_filepath)
+                    #print("removed_media_filepaths = ", removed_media_filepaths)
+                    #print("media_filepaths = ", media_filepaths)
+                    #print("processed_list = ", processed_list)
+                    #print("len(removed_media_filepaths) = ", len(removed_media_filepaths))
+                    #print("len(media_filepaths) = ", len(media_filepaths))
+                    #print("len(processed_list) = ", len(processed_list))
+                    #print("")
 
             print("")
 
@@ -3627,7 +3783,7 @@ def main():
     if processed_list:
         # START THE TRANSCRIBE PROCESS
         print("PERFORMING SPEECH RECOGNITION FOR MEDIA FILES THAT HAVE NO SUBTITLES STREAMS OR FORCED TO BE RECOGNIZED")
-        print("=========================================================================================================")
+        print("=======================================================================================================")
 
         for media_filepath in processed_list:
             print(f"Processing '{media_filepath}'")
@@ -3641,11 +3797,20 @@ def main():
                 wav_filepath, sample_rate = wav_converter(media_filepath)
                 pbar.finish()
 
+                region_finder = SpeechRegionFinder(frame_width=4096, min_region_size=0.5, max_region_size=6, error_messages_callback=show_error_messages)
+                regions = region_finder(wav_filepath)
+
+                if regions == None:
+                    print("No speech regions found")
+                    sys.exit(1)
+
                 if args.src_language == "auto":
                     segments, info = model.transcribe(wav_filepath)
                     src_language = info.language
                     print(f"Detected language                       : {info.language} (probability = {info.language_probability})")
-                    total_duration = info.duration
+                    total_duration = int(info.duration * 10) / 10
+                    #print("total_duration = ", total_duration)
+
                     ffmpeg_src_language_code = google_language.ffmpeg_code_of_code[src_language]
 
                     if src_language in google_unsupported_languages and do_translate:
@@ -3655,17 +3820,29 @@ def main():
                 else:
                     segments, info = model.transcribe(wav_filepath, language=src_language, task=task)
                     total_duration = info.duration
+                    #print("total_duration = ", total_duration)
 
                 if segments:
                     widgets = ["Performing speech recognition           : ", Percentage(), ' ', Bar(marker='#'), ' ', ETA()]
                     pbar = ProgressBar(widgets=widgets, maxval=100).start()
-
                     timed_subtitles = []
                     regions = []
                     transcripts = []
+                    segment_start = None
+                    segment_end = None
                     for segment in segments:
-                        progress = int(round(float(segment.end))*100/total_duration)
-                        regions.append((segment.start, segment.end))
+                        segment_start = segment.start
+                        if (segment.end>total_duration):
+                            segment_end = int(total_duration*10)/10
+                        else:
+                            segment_end = segment.end
+
+                        progress = int(round(float(segment_end))*100/total_duration)
+                        #print("progress = ", progress)
+                        #print("info.duration = ", info.duration)
+                        #print("(segment_start, segment_end) = ", (segment_start, segment_end))
+                        #print("segment.text = ", segment.text)
+                        regions.append((segment_start, segment_end))
                         transcripts.append(segment.text)
                         pbar.update(progress)
                     pbar.finish()
@@ -3908,9 +4085,10 @@ def main():
                     return 1
 
     #print(f"len(media_filepaths) = {len(media_filepaths)}")
+    #print(f"len(processed_list) = {len(processed_list)}")
     #print(f"completed_tasks = {completed_tasks}")
 
-    if len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
+    if len(media_filepaths)>0 and len(processed_list)>0 and completed_tasks == len(media_filepaths) + len(processed_list):
         transcribe_end_time = time.time()
         transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
         transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
@@ -3918,6 +4096,15 @@ def main():
         hour, minute, second = transcribe_elapsed_time_str.split(":")
         msg = "Total running time                      : %s:%s:%s" %(hour.zfill(2), minute, second)
         print(msg)
+    elif len(media_filepaths)>0 and completed_tasks == len(media_filepaths):
+        transcribe_end_time = time.time()
+        transcribe_elapsed_time = transcribe_end_time - transcribe_start_time
+        transcribe_elapsed_time_seconds = timedelta(seconds=int(transcribe_elapsed_time))
+        transcribe_elapsed_time_str = str(transcribe_elapsed_time_seconds)
+        hour, minute, second = transcribe_elapsed_time_str.split(":")
+        msg = "Total running time                      : %s:%s:%s" %(hour.zfill(2), minute, second)
+        print(msg)
+
 
     if pool:
         pool.close()
