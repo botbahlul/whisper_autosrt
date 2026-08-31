@@ -27,8 +27,6 @@ if exist "%fileToDelete1%" (
 )
 
 pyinstaller ^
---exclude-module pkg_resources ^
---collect-all faster_whisper ^
 --hidden-import ctranslate2 ^
 --hidden-import huggingface_hub ^
 --hidden-import tokenizers ^
