@@ -27,8 +27,6 @@ install_requires=[
     "pysrt>=1.0.1",
     "six>=1.11.0",
     "progressbar2>=3.34.3",
-    "av==12.2.0",
-    "numpy>=1.24.3,<2.0",
     "faster_whisper>=0.4.1",
 ]
 
