@@ -13,7 +13,7 @@ Just extract those ffmpeg.exe, ffprobe.exe, and whisper_autosrt.exe into a folde
 
 You can get latest version of ffmpeg from https://www.ffmpeg.org/
 
-In Linux you have to install this script with python (version minimal 3.8.12) and install ffmpeg with your linux package manager, for example in debian based linux distribution you can type :
+In Linux you have to install this script with python (version minimal 3.10.4) and install ffmpeg with your linux package manager, for example in debian based linux distribution you can type :
 
 ```
 sudo apt update
@@ -34,7 +34,7 @@ pyinstaller --onefile whisper_autosrt.py
 The executable compiled file will be placed by pyinstaller into dist subfolder of your current working folder, so you can just rename and put that compiled file into a folder that has been added to your PATH ENVIRONMENT so you can execute it from anywhere. 
 Beware that on Linux system the compiled file could be very large (about 2.2GB) because pyinstaller will include all nvidia cuda driver on it.
 
-I was succesfuly compiled it on Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.8.12 on Debian 9.
+I was succesfuly compiled it on Windows 10 with pyinstaller-5.1 and Pyhton-3.10.4, and python-3.10.4 on Debian 10.
 
 Another alternative way to install this script with python is by cloning this git (or downloading this git as zip then extract it into a folder), and then just type :
 
