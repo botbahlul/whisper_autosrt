@@ -28,6 +28,8 @@ pip install --upgrade whisper_autosrt
 You can try to compile that whisper_autosrt.py script in win/linux folder into a single executable file with pyinstaller by typing these :
 ```
 pip install pyinstaller
+
+(for windows)
 pyinstaller ^
 --hidden-import ctranslate2 ^
 --hidden-import huggingface_hub ^
@@ -35,6 +37,17 @@ pyinstaller ^
 --hidden-import onnxruntime ^
 --hidden-import faster_whisper ^
 --add-data "C:\Program Files\Python310\lib\site-packages\faster_whisper\assets;faster_whisper\assets" ^
+--onefile whisper_autosrt.py
+
+(for linux)
+pyinstaller \
+--exclude-module pkg_resources \
+--collect-all faster_whisper \
+--hidden-import ctranslate2 \
+--hidden-import huggingface_hub \
+--hidden-import tokenizers \
+--hidden-import onnxruntime \
+--hidden-import faster_whisper \
 --onefile whisper_autosrt.py
 ```
 
