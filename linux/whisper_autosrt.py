@@ -30,7 +30,7 @@ import ctypes
 import shutil
 
 
-VERSION = "0.1.12"
+VERSION = "0.1.15"
 #marker='█'
 
 
