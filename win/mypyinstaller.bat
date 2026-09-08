@@ -29,10 +29,9 @@ if exist "%fileToDelete1%" (
 pyinstaller ^
 --hidden-import ctranslate2 ^
 --hidden-import huggingface_hub ^
+--hidden-import hf_xet ^
 --hidden-import tokenizers ^
 --hidden-import onnxruntime ^
 --hidden-import faster_whisper ^
---hidden-import argparse ^
---hidden-import appdirs ^
---hidden-import json ^
+--add-data "C:\Users\Toshiba\Documents\GitHub\whisper_autosrt\.venv\Lib\site-packages\faster_whisper\assets;faster_whisper\assets" ^
 --onefile whisper_autosrt.py
