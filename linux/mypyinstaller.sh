@@ -21,6 +21,7 @@ pyinstaller --python=/usr/local/bin/python3.10 \
 --collect-all faster_whisper \
 --hidden-import ctranslate2 \
 --hidden-import huggingface_hub \
+--hidden-import hf_xet \
 --hidden-import tokenizers \
 --hidden-import onnxruntime \
 --hidden-import faster_whisper \
@@ -28,4 +29,3 @@ pyinstaller --python=/usr/local/bin/python3.10 \
 --hidden-import appdirs \
 --hidden-import tqdm \
 --onefile whisper_autosrt.py
-
